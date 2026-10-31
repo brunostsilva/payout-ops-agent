@@ -53,9 +53,7 @@ public class PayoutAgent {
     }
 
     public AgentAnswer ask(String question) {
-        ToolCallingChatOptions options = ToolCallingChatOptions.builder()
-                .toolCallbacks(tools)
-                .build();
+        ToolCallingChatOptions options = requestOptions();
         Prompt prompt = new Prompt(
                 List.of(new SystemMessage(SYSTEM_PROMPT.formatted(LocalDate.now(clock))), new UserMessage(question)),
                 options);
@@ -73,6 +71,17 @@ public class PayoutAgent {
             response = chatModel.call(prompt);
         }
         return new AgentAnswer(answerText(response), List.copyOf(trace));
+    }
+
+    /**
+     * Provider models (OpenAI, Ollama) cast the prompt options to their own options type and no longer
+     * merge them with their configured defaults, so the request options must start from the model's
+     * own options (model, temperature...) with the tools added on top.
+     */
+    private ToolCallingChatOptions requestOptions() {
+        return chatModel.getOptions() instanceof ToolCallingChatOptions defaults
+                ? defaults.mutate().toolCallbacks(tools).build()
+                : ToolCallingChatOptions.builder().toolCallbacks(tools).build();
     }
 
     private static String answerText(ChatResponse response) {
