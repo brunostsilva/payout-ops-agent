@@ -42,10 +42,13 @@ public class ScriptedChatModel implements ChatModel {
 
     private static final Pattern SELLER_ID = Pattern.compile("seller-[A-Za-z0-9]+");
     private static final Pattern DATE = Pattern.compile("\\d{4}-\\d{2}-\\d{2}");
-    // An explicit request to hold/block a payout ("hold seller-123's payout ..."), not a question about
-    // status such as "is the payout on hold?", where "payout" comes before "hold".
-    private static final Pattern HOLD_REQUEST =
-            Pattern.compile("\\b(?:hold|block)\\b[^.?!]*\\bpayout\\b", Pattern.CASE_INSENSITIVE);
+    // An explicit, imperative request at the start of a sentence: "Hold seller-123's payout ...",
+    // "Please block ...", "Can you hold ...". Status questions ("Is there a hold on ...?"), negations
+    // ("Don't hold ...") and releases ("Release the hold ...") don't start with the verb, so they don't match.
+    private static final Pattern HOLD_REQUEST = Pattern.compile(
+            "(?:^|[.!?]\\s+)\\s*(?:please\\s+)?(?:(?:can|could|would)\\s+you\\s+(?:please\\s+)?)?"
+                    + "(?:hold|block)\\b[^.?!]*\\bpayout\\b",
+            Pattern.CASE_INSENSITIVE);
 
     private final JsonMapper jsonMapper;
 

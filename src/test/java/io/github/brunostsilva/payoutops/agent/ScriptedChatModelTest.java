@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.messages.UserMessage;
@@ -39,13 +41,33 @@ class ScriptedChatModelTest {
                 .contains("\"reason\":\"Requested by an analyst through the agent: Hold seller-123's payout");
     }
 
-    @Test
-    void doesNotProposeAHoldWhenOnlyAskingAboutHoldStatus() {
-        ChatResponse response = model.call(new Prompt(
-                new UserMessage("Is seller-123's payout on hold for 2026-10-26?")));
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "Is seller-123's payout on hold for 2026-10-26?",
+        "Is there a hold on seller-123's payout for 2026-10-26?",
+        "Release the hold on seller-123's payout for 2026-10-26",
+        "Don't hold seller-123's payout for 2026-10-26",
+        "Why did seller-123's payout drop in the week of 2026-10-26? Should we hold it?"
+    })
+    void doesNotProposeAHoldUnlessExplicitlyAskedTo(String question) {
+        ChatResponse response = model.call(new Prompt(new UserMessage(question)));
 
         AssistantMessage.ToolCall call = response.getResult().getOutput().getToolCalls().getFirst();
         assertThat(call.name()).isEqualTo(ScriptedChatModel.COMPARISON_TOOL);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "Hold seller-123's payout for 2026-10-26",
+        "Please block seller-123's payout for the week of 2026-10-26",
+        "Could you hold seller-123's payout for 2026-10-26?",
+        "The chargebacks look like fraud. Hold seller-123's payout for 2026-10-26"
+    })
+    void proposesAHoldForExplicitRequests(String question) {
+        ChatResponse response = model.call(new Prompt(new UserMessage(question)));
+
+        AssistantMessage.ToolCall call = response.getResult().getOutput().getToolCalls().getFirst();
+        assertThat(call.name()).isEqualTo(ScriptedChatModel.PROPOSE_HOLD_TOOL);
     }
 
     @Test
