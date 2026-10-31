@@ -1,0 +1,20 @@
+spring:
+  application:
+    name: payout-ops-agent
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/payoutops}
+    username: ${DATABASE_USERNAME:payoutops}
+    password: ${DATABASE_PASSWORD:payoutops}
+  flyway:
+    # db/demo holds a repeatable migration with the synthetic demo scenario.
+    # Drop it from this list for any non-demo deployment.
+    locations: classpath:db/migration,classpath:db/demo
+  mvc:
+    problemdetails:
+      enabled: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
