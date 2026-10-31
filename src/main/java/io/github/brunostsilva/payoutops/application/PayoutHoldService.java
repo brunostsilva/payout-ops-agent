@@ -35,21 +35,22 @@ public class PayoutHoldService {
 
     /**
      * Returns the seller's active (pending or approved) hold for the period if there is one, otherwise
-     * creates a pending proposal. A rejected hold doesn't block a new proposal.
+     * creates a pending proposal. A rejected hold doesn't block a new proposal. The result says which
+     * of the two happened, so callers never report a reused hold as a new proposal.
      */
-    public PayoutHold propose(SellerId sellerId, PayoutPeriod period, String reason, String proposedBy) {
+    public HoldProposal propose(SellerId sellerId, PayoutPeriod period, String reason, String proposedBy) {
         if (sellers.findById(sellerId).isEmpty()) {
             throw new SellerNotFoundException(sellerId);
         }
         for (int attempt = 1; ; attempt++) {
             var existing = holds.findActive(sellerId, period);
             if (existing.isPresent()) {
-                return existing.get();
+                return new HoldProposal(existing.get(), false);
             }
             PayoutHold hold = PayoutHold.propose(sellerId, period, reason, proposedBy, clock.instant());
             try {
                 holds.insert(hold);
-                return hold;
+                return new HoldProposal(hold, true);
             } catch (DuplicateKeyException concurrentProposal) {
                 // A concurrent proposal won the unique index. Look again: usually it is still active and we
                 // return it; if it was rejected in the meantime, the period is free and we try once more.

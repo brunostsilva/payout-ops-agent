@@ -1,7 +1,9 @@
 package io.github.brunostsilva.payoutops.agent;
 
 import io.github.brunostsilva.payoutops.api.PayoutResponses.PayoutHoldResponse;
+import io.github.brunostsilva.payoutops.application.HoldProposal;
 import io.github.brunostsilva.payoutops.application.PayoutHoldService;
+import io.github.brunostsilva.payoutops.domain.PayoutHold;
 import io.github.brunostsilva.payoutops.domain.PayoutPeriod;
 import io.github.brunostsilva.payoutops.domain.SellerId;
 import java.time.LocalDate;
@@ -24,6 +26,10 @@ public class PayoutActionTools {
     static final String APPROVED_NOTE =
             "An analyst already APPROVED a hold for this seller and week, so this payout is held. "
                     + "No new proposal was created.";
+    static final String EXISTING_PENDING_NOTE =
+            "A proposal for this seller and week was already PENDING (reason: %s). This request did NOT create a "
+                    + "new proposal and its reason was not recorded. Nothing has been held yet: an analyst must "
+                    + "approve or reject the existing proposal.";
 
     private final PayoutHoldService holdService;
 
@@ -48,11 +54,23 @@ public class PayoutActionTools {
         } catch (DateTimeParseException invalid) {
             throw new IllegalArgumentException("weekOf must be a date formatted YYYY-MM-DD, got: " + weekOf);
         }
-        var hold = holdService.propose(new SellerId(sellerId), period, reason, PROPOSED_BY);
-        return new ProposedHold(PayoutHoldResponse.from(hold), hold.isPending() ? PENDING_NOTE : APPROVED_NOTE);
+        HoldProposal proposal = holdService.propose(new SellerId(sellerId), period, reason, PROPOSED_BY);
+        PayoutHold hold = proposal.hold();
+        String note;
+        if (!hold.isPending()) {
+            note = APPROVED_NOTE;
+        } else if (proposal.created()) {
+            note = PENDING_NOTE;
+        } else {
+            note = EXISTING_PENDING_NOTE.formatted(hold.reason());
+        }
+        return new ProposedHold(PayoutHoldResponse.from(hold), proposal.created(), note);
     }
 
-    /** Tool result: the hold plus an explicit note for the model on what has (not) been executed. */
-    public record ProposedHold(PayoutHoldResponse hold, String note) {
+    /**
+     * Tool result: the hold, whether this call created it, and an explicit note for the model on what
+     * has (not) been executed.
+     */
+    public record ProposedHold(PayoutHoldResponse hold, boolean created, String note) {
     }
 }

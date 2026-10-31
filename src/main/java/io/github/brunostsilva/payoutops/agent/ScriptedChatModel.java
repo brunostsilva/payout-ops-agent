@@ -107,6 +107,18 @@ public class ScriptedChatModel implements ChatModel {
                             status.toLowerCase(Locale.ROOT), id)
                     + "proposal was created.");
         }
+        if (!result.path("created").booleanValue(true)) {
+            return text(("Seller %s's payout for the week starting %s already has a pending hold proposal (hold %s, "
+                            + "reason: %s), so no new proposal was created and your reason was not recorded. Nothing "
+                            + "has been held yet: an analyst must approve or reject it via POST /api/holds/%s/approve "
+                            + "or /reject.")
+                    .formatted(
+                            hold.path("sellerId").asString(),
+                            hold.path("periodStart").asString(),
+                            id,
+                            hold.path("reason").asString(),
+                            id));
+        }
         return text(("Proposed a payout hold for %s for the week starting %s (hold %s). Status: %s. Nothing has been "
                         + "held yet: an analyst must approve or reject it via POST /api/holds/%s/approve or /reject.")
                 .formatted(

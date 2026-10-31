@@ -90,6 +90,28 @@ class ScriptedChatModelTest {
     }
 
     @Test
+    void reportsAReusedPendingProposalInsteadOfClaimingANewOne() {
+        String result = """
+                {"hold": {"id": "7f1c", "sellerId": "seller-123", "periodStart": "2026-10-26", "status": "PENDING",
+                          "reason": "two chargebacks"},
+                 "created": false,
+                 "note": "A proposal for this seller and week was already PENDING."}
+                """;
+        ToolResponseMessage toolResponse = ToolResponseMessage.builder()
+                .responses(List.of(new ToolResponseMessage.ToolResponse(
+                        "call-1", ScriptedChatModel.PROPOSE_HOLD_TOOL, result)))
+                .build();
+
+        ChatResponse response = model.call(new Prompt(List.of(new UserMessage("question"), toolResponse)));
+
+        assertThat(response.getResult().getOutput().getText()).isEqualTo(
+                "[scripted model] Seller seller-123's payout for the week starting 2026-10-26 already has a pending "
+                        + "hold proposal (hold 7f1c, reason: two chargebacks), so no new proposal was created and your "
+                        + "reason was not recorded. Nothing has been held yet: an analyst must approve or reject it via "
+                        + "POST /api/holds/7f1c/approve or /reject.");
+    }
+
+    @Test
     void reportsAnAlreadyApprovedHoldInsteadOfAPendingProposal() {
         String result = """
                 {"hold": {"id": "7f1c", "sellerId": "seller-123", "periodStart": "2026-10-26", "status": "APPROVED"},

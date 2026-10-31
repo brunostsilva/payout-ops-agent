@@ -33,7 +33,7 @@ class PayoutHoldServiceTest {
 
     @Test
     void proposalIsPendingAndListed() {
-        PayoutHold hold = service.propose(SELLER, WEEK, "two chargebacks", "agent");
+        PayoutHold hold = service.propose(SELLER, WEEK, "two chargebacks", "agent").hold();
 
         assertThat(hold.status()).isEqualTo(HoldStatus.PENDING);
         assertThat(hold.proposedAt()).isEqualTo(clock.instant());
@@ -42,19 +42,30 @@ class PayoutHoldServiceTest {
 
     @Test
     void proposingAgainForTheSamePeriodReturnsTheExistingPendingHold() {
-        PayoutHold first = service.propose(SELLER, WEEK, "two chargebacks", "agent");
-        PayoutHold second = service.propose(SELLER, WEEK, "asked again", "agent");
+        PayoutHold first = service.propose(SELLER, WEEK, "two chargebacks", "agent").hold();
+        PayoutHold second = service.propose(SELLER, WEEK, "asked again", "agent").hold();
 
         assertThat(second.id()).isEqualTo(first.id());
         assertThat(service.list(HoldStatus.PENDING)).hasSize(1);
     }
 
     @Test
+    void theResultSaysWhetherTheProposalWasCreatedOrReused() {
+        HoldProposal first = service.propose(SELLER, WEEK, "first reason", "agent");
+        HoldProposal second = service.propose(SELLER, WEEK, "second reason", "agent");
+
+        assertThat(first.created()).isTrue();
+        assertThat(second.created()).isFalse();
+        assertThat(second.hold().id()).isEqualTo(first.hold().id());
+        assertThat(second.hold().reason()).as("the first reason is kept").isEqualTo("first reason");
+    }
+
+    @Test
     void aNewProposalIsAllowedOnceThePreviousOneWasRejected() {
-        PayoutHold first = service.propose(SELLER, WEEK, "two chargebacks", "agent");
+        PayoutHold first = service.propose(SELLER, WEEK, "two chargebacks", "agent").hold();
         service.reject(first.id(), "ana", "false positive");
 
-        PayoutHold second = service.propose(SELLER, WEEK, "new chargeback", "agent");
+        PayoutHold second = service.propose(SELLER, WEEK, "new chargeback", "agent").hold();
 
         assertThat(second.id()).isNotEqualTo(first.id());
         assertThat(second.status()).isEqualTo(HoldStatus.PENDING);
@@ -62,10 +73,10 @@ class PayoutHoldServiceTest {
 
     @Test
     void proposingForAnAlreadyApprovedWeekReturnsTheApprovedHold() {
-        PayoutHold first = service.propose(SELLER, WEEK, "two chargebacks", "agent");
+        PayoutHold first = service.propose(SELLER, WEEK, "two chargebacks", "agent").hold();
         service.approve(first.id(), "ana", null);
 
-        PayoutHold again = service.propose(SELLER, WEEK, "asked again", "agent");
+        PayoutHold again = service.propose(SELLER, WEEK, "asked again", "agent").hold();
 
         assertThat(again.id()).isEqualTo(first.id());
         assertThat(again.status()).isEqualTo(HoldStatus.APPROVED);
@@ -74,7 +85,7 @@ class PayoutHoldServiceTest {
 
     @Test
     void approveAndRejectAreFinal() {
-        PayoutHold hold = service.propose(SELLER, WEEK, "two chargebacks", "agent");
+        PayoutHold hold = service.propose(SELLER, WEEK, "two chargebacks", "agent").hold();
 
         PayoutHold approved = service.approve(hold.id(), "ana", null);
 
@@ -86,7 +97,7 @@ class PayoutHoldServiceTest {
 
     @Test
     void aDecisionLostToAConcurrentOneIsRejected() {
-        PayoutHold hold = service.propose(SELLER, WEEK, "two chargebacks", "agent");
+        PayoutHold hold = service.propose(SELLER, WEEK, "two chargebacks", "agent").hold();
         // Simulates another analyst deciding between our read and our write.
         holds.recordDecision(hold.reject("bob", "false positive", clock.instant()));
 
@@ -113,7 +124,7 @@ class PayoutHoldServiceTest {
         };
         PayoutHoldService racingService = new PayoutHoldService(sellers, racingHolds, clock);
 
-        PayoutHold hold = racingService.propose(SELLER, WEEK, "two chargebacks", "agent");
+        PayoutHold hold = racingService.propose(SELLER, WEEK, "two chargebacks", "agent").hold();
 
         assertThat(hold.status()).isEqualTo(HoldStatus.PENDING);
         assertThat(racingHolds.findActive(SELLER, WEEK)).contains(hold);

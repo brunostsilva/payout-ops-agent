@@ -174,6 +174,21 @@ class PayoutAgentTest {
     }
 
     @Test
+    void aSecondRequestForAPendingWeekIsReportedAsReusedNotAsANewProposal() {
+        agent.ask("Hold seller-1's payout for the week of 2026-10-26, first analyst");
+
+        AgentAnswer second = agent.ask("Hold seller-1's payout for the week of 2026-10-26, second analyst");
+
+        assertThat(holds.findByStatus(HoldStatus.PENDING)).hasSize(1);
+        assertThat(second.answer())
+                .contains("already has a pending hold proposal")
+                .contains("first analyst")
+                .doesNotContain("Proposed a payout hold");
+        assertThat(second.toolCalls()).singleElement()
+                .satisfies(call -> assertThat(call.result()).contains("\"created\":false"));
+    }
+
+    @Test
     void stopsAModelThatNeverStopsCallingTools() {
         ChatModel alwaysCallsTools = new ChatModel() {
             @Override

@@ -199,7 +199,9 @@ stateDiagram-v2
 - **Idempotent proposals.** Asking again for the same seller and week returns the existing hold
   while it is pending or approved (so an approved week is never proposed twice); only a rejected
   hold allows a new proposal. A partial unique index (`WHERE status IN ('PENDING', 'APPROVED')`)
-  enforces this in the database, even for concurrent requests.
+  enforces this in the database, even for concurrent requests. The tool result says whether the
+  request `created` a proposal or reused an existing one (whose original reason is kept), so the
+  agent never reports a reused hold as a new proposal.
 - **Decide exactly once.** A decision is written with `UPDATE … WHERE status = 'PENDING'`. If
   another analyst decided first, the second request gets `409 Conflict` instead of silently
   overwriting the first decision.
