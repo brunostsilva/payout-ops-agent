@@ -57,7 +57,7 @@ be tested exhaustively and reused by the REST API, the agent tools and the MCP s
     holds anything itself;
   - analysts approve or reject proposals through `/api/holds`, and each hold can be decided
     **exactly once**, even with concurrent reviewers;
-  - proposals are idempotent: at most one pending hold per seller and week.
+  - proposals are idempotent: at most one active (pending or approved) hold per seller and week.
 - **Tests**: fast unit tests for the domain, application and agent layers, plus end-to-end
   integration tests against a real Postgres via **Testcontainers**.
 - **CI** on GitHub Actions running the full suite on Java 25.
@@ -196,9 +196,10 @@ stateDiagram-v2
 - **Propose only.** `proposePayoutHold` lives in its own `PayoutActionTools` class, apart from
   the read-only tools. It returns the proposal plus an explicit note that nothing was held, and the
   system prompt forbids proposing a hold the user didn't ask for.
-- **Idempotent proposals.** Asking twice for the same seller and week returns the same pending
-  hold. A partial unique index (`WHERE status = 'PENDING'`) enforces this in the database, even
-  for concurrent requests.
+- **Idempotent proposals.** Asking again for the same seller and week returns the existing hold
+  while it is pending or approved (so an approved week is never proposed twice); only a rejected
+  hold allows a new proposal. A partial unique index (`WHERE status IN ('PENDING', 'APPROVED')`)
+  enforces this in the database, even for concurrent requests.
 - **Decide exactly once.** A decision is written with `UPDATE … WHERE status = 'PENDING'`. If
   another analyst decided first, the second request gets `409 Conflict` instead of silently
   overwriting the first decision.

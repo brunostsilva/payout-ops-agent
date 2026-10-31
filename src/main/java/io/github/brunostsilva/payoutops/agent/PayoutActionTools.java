@@ -21,6 +21,9 @@ public class PayoutActionTools {
     static final String PROPOSED_BY = "payout-ops-agent";
     static final String PENDING_NOTE =
             "Proposal recorded as PENDING. Nothing has been held: an analyst must approve or reject it.";
+    static final String APPROVED_NOTE =
+            "An analyst already APPROVED a hold for this seller and week, so this payout is held. "
+                    + "No new proposal was created.";
 
     private final PayoutHoldService holdService;
 
@@ -30,9 +33,10 @@ public class PayoutActionTools {
 
     @Tool(description = """
             Proposes holding a seller's payout for the Monday-to-Sunday week containing weekOf. It does NOT hold
-            anything: it records a PENDING proposal that an analyst must approve or reject. If a pending proposal
-            already exists for that seller and week, that one is returned instead of creating a duplicate.
-            Only use it when the user explicitly asks to hold or block a payout.""")
+            anything: it records a PENDING proposal that an analyst must approve or reject. If that seller and week
+            already have a pending or approved hold, that one is returned instead of creating a duplicate; read the
+            returned status and note before answering. Only use it when the user explicitly asks to hold or block
+            a payout.""")
     public ProposedHold proposePayoutHold(
             @ToolParam(description = "Seller id, e.g. seller-123") String sellerId,
             @ToolParam(description = "Any date inside the week whose payout should be held, formatted YYYY-MM-DD")
@@ -45,10 +49,10 @@ public class PayoutActionTools {
             throw new IllegalArgumentException("weekOf must be a date formatted YYYY-MM-DD, got: " + weekOf);
         }
         var hold = holdService.propose(new SellerId(sellerId), period, reason, PROPOSED_BY);
-        return new ProposedHold(PayoutHoldResponse.from(hold), PENDING_NOTE);
+        return new ProposedHold(PayoutHoldResponse.from(hold), hold.isPending() ? PENDING_NOTE : APPROVED_NOTE);
     }
 
-    /** Tool result: the proposal plus an explicit reminder for the model that nothing was executed. */
+    /** Tool result: the hold plus an explicit note for the model on what has (not) been executed. */
     public record ProposedHold(PayoutHoldResponse hold, String note) {
     }
 }

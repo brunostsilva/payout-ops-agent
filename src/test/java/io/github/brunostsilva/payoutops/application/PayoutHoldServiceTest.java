@@ -49,13 +49,26 @@ class PayoutHoldServiceTest {
     }
 
     @Test
-    void aNewProposalIsAllowedOnceThePreviousOneWasDecided() {
+    void aNewProposalIsAllowedOnceThePreviousOneWasRejected() {
         PayoutHold first = service.propose(SELLER, WEEK, "two chargebacks", "agent");
         service.reject(first.id(), "ana", "false positive");
 
         PayoutHold second = service.propose(SELLER, WEEK, "new chargeback", "agent");
 
         assertThat(second.id()).isNotEqualTo(first.id());
+        assertThat(second.status()).isEqualTo(HoldStatus.PENDING);
+    }
+
+    @Test
+    void proposingForAnAlreadyApprovedWeekReturnsTheApprovedHold() {
+        PayoutHold first = service.propose(SELLER, WEEK, "two chargebacks", "agent");
+        service.approve(first.id(), "ana", null);
+
+        PayoutHold again = service.propose(SELLER, WEEK, "asked again", "agent");
+
+        assertThat(again.id()).isEqualTo(first.id());
+        assertThat(again.status()).isEqualTo(HoldStatus.APPROVED);
+        assertThat(service.list(HoldStatus.PENDING)).isEmpty();
     }
 
     @Test

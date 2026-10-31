@@ -97,13 +97,20 @@ public class ScriptedChatModel implements ChatModel {
         }
         JsonNode hold = result.path("hold");
         String id = hold.path("id").asString();
+        String status = hold.path("status").asString();
+        if (!"PENDING".equals(status)) {
+            return text("Seller %s's payout for the week starting %s already has an %s hold (hold %s), so no new "
+                    .formatted(hold.path("sellerId").asString(), hold.path("periodStart").asString(),
+                            status.toLowerCase(Locale.ROOT), id)
+                    + "proposal was created.");
+        }
         return text(("Proposed a payout hold for %s for the week starting %s (hold %s). Status: %s. Nothing has been "
                         + "held yet: an analyst must approve or reject it via POST /api/holds/%s/approve or /reject.")
                 .formatted(
                         hold.path("sellerId").asString(),
                         hold.path("periodStart").asString(),
                         id,
-                        hold.path("status").asString(),
+                        status,
                         id));
     }
 

@@ -15,8 +15,9 @@ CREATE TABLE payout_holds (
         OR (status <> 'PENDING' AND decided_by IS NOT NULL AND decided_at IS NOT NULL))
 );
 
--- At most one pending hold per seller and payout period, even under concurrent proposals.
-CREATE UNIQUE INDEX payout_holds_one_pending_per_period
-    ON payout_holds (seller_id, period_start) WHERE status = 'PENDING';
+-- At most one active (pending or approved) hold per seller and payout period, even under concurrent
+-- proposals. A rejected hold doesn't count, so the period can be proposed again.
+CREATE UNIQUE INDEX payout_holds_one_active_per_period
+    ON payout_holds (seller_id, period_start) WHERE status IN ('PENDING', 'APPROVED');
 
 CREATE INDEX idx_payout_holds_status ON payout_holds (status, proposed_at);

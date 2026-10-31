@@ -68,6 +68,24 @@ class ScriptedChatModelTest {
     }
 
     @Test
+    void reportsAnAlreadyApprovedHoldInsteadOfAPendingProposal() {
+        String result = """
+                {"hold": {"id": "7f1c", "sellerId": "seller-123", "periodStart": "2026-10-26", "status": "APPROVED"},
+                 "note": "An analyst already APPROVED a hold for this seller and week."}
+                """;
+        ToolResponseMessage toolResponse = ToolResponseMessage.builder()
+                .responses(List.of(new ToolResponseMessage.ToolResponse(
+                        "call-1", ScriptedChatModel.PROPOSE_HOLD_TOOL, result)))
+                .build();
+
+        ChatResponse response = model.call(new Prompt(List.of(new UserMessage("question"), toolResponse)));
+
+        assertThat(response.getResult().getOutput().getText()).isEqualTo(
+                "[scripted model] Seller seller-123's payout for the week starting 2026-10-26 already has an approved "
+                        + "hold (hold 7f1c), so no new proposal was created.");
+    }
+
+    @Test
     void asksForSellerAndDateWhenTheyAreMissing() {
         ChatResponse response = model.call(new Prompt(new UserMessage("Why did my payout drop?")));
 

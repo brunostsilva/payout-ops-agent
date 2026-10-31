@@ -31,12 +31,15 @@ public class PayoutHoldService {
         this.clock = clock;
     }
 
-    /** Returns the existing pending hold for the seller and period if there is one, otherwise creates it. */
+    /**
+     * Returns the seller's active (pending or approved) hold for the period if there is one, otherwise
+     * creates a pending proposal. A rejected hold doesn't block a new proposal.
+     */
     public PayoutHold propose(SellerId sellerId, PayoutPeriod period, String reason, String proposedBy) {
         if (sellers.findById(sellerId).isEmpty()) {
             throw new SellerNotFoundException(sellerId);
         }
-        var existing = holds.findPending(sellerId, period);
+        var existing = holds.findActive(sellerId, period);
         if (existing.isPresent()) {
             return existing.get();
         }
@@ -45,7 +48,7 @@ public class PayoutHoldService {
             holds.insert(hold);
             return hold;
         } catch (DuplicateKeyException concurrentProposal) {
-            return holds.findPending(sellerId, period).orElseThrow(() -> concurrentProposal);
+            return holds.findActive(sellerId, period).orElseThrow(() -> concurrentProposal);
         }
     }
 

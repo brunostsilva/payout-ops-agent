@@ -82,8 +82,11 @@ class JdbcPayoutHoldRepository implements PayoutHoldRepository {
     }
 
     @Override
-    public Optional<PayoutHold> findPending(SellerId sellerId, PayoutPeriod period) {
-        return jdbc.sql(SELECT + "WHERE seller_id = :sellerId AND period_start = :periodStart AND status = 'PENDING'")
+    public Optional<PayoutHold> findActive(SellerId sellerId, PayoutPeriod period) {
+        return jdbc.sql(SELECT + """
+                        WHERE seller_id = :sellerId AND period_start = :periodStart
+                          AND status IN ('PENDING', 'APPROVED')
+                        """)
                 .param("sellerId", sellerId.value())
                 .param("periodStart", period.start())
                 .query(JdbcPayoutHoldRepository::mapRow)

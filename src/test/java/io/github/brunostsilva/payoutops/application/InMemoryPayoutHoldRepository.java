@@ -13,15 +13,15 @@ import java.util.Optional;
 import java.util.UUID;
 import org.springframework.dao.DuplicateKeyException;
 
-/** Mirrors the guarantees of the database: one pending hold per seller and period, decide-once updates. */
+/** Mirrors the guarantees of the database: one active hold per seller and period, decide-once updates. */
 public class InMemoryPayoutHoldRepository implements PayoutHoldRepository {
 
     private final Map<UUID, PayoutHold> holds = new LinkedHashMap<>();
 
     @Override
     public synchronized void insert(PayoutHold hold) {
-        if (findPending(hold.sellerId(), hold.period()).isPresent()) {
-            throw new DuplicateKeyException("A pending hold already exists for " + hold.sellerId());
+        if (findActive(hold.sellerId(), hold.period()).isPresent()) {
+            throw new DuplicateKeyException("An active hold already exists for " + hold.sellerId());
         }
         holds.put(hold.id(), hold);
     }
@@ -42,9 +42,9 @@ public class InMemoryPayoutHoldRepository implements PayoutHoldRepository {
     }
 
     @Override
-    public synchronized Optional<PayoutHold> findPending(SellerId sellerId, PayoutPeriod period) {
+    public synchronized Optional<PayoutHold> findActive(SellerId sellerId, PayoutPeriod period) {
         return holds.values().stream()
-                .filter(hold -> hold.isPending() && hold.sellerId().equals(sellerId) && hold.period().equals(period))
+                .filter(hold -> hold.isActive() && hold.sellerId().equals(sellerId) && hold.period().equals(period))
                 .findFirst();
     }
 

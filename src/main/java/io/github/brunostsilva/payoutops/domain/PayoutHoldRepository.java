@@ -6,7 +6,7 @@ import java.util.UUID;
 
 public interface PayoutHoldRepository {
 
-    /** Stores a new pending hold. Fails if the seller already has a pending hold for the same period. */
+    /** Stores a new pending hold. Fails if the seller already has an active hold for the same period. */
     void insert(PayoutHold hold);
 
     /**
@@ -18,7 +18,8 @@ public interface PayoutHoldRepository {
 
     Optional<PayoutHold> findById(UUID id);
 
-    Optional<PayoutHold> findPending(SellerId sellerId, PayoutPeriod period);
+    /** The seller's pending or approved hold for the period, if any (see {@link PayoutHold#isActive()}). */
+    Optional<PayoutHold> findActive(SellerId sellerId, PayoutPeriod period);
 
     /** Holds with the given status, oldest proposal first. */
     List<PayoutHold> findByStatus(HoldStatus status);

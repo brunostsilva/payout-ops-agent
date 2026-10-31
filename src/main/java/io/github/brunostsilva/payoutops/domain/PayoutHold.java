@@ -41,6 +41,11 @@ public record PayoutHold(
         return status == HoldStatus.PENDING;
     }
 
+    /** Pending or approved: the period is already covered and must not get another proposal. */
+    public boolean isActive() {
+        return status != HoldStatus.REJECTED;
+    }
+
     public PayoutHold approve(String analyst, String note, Instant decidedAt) {
         return decide(HoldStatus.APPROVED, new Decision(analyst, decidedAt, note));
     }
