@@ -1,0 +1,114 @@
+package io.github.brunostsilva.payoutops.agent;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.math.RoundingMode;
+import java.util.List;
+import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.ToolResponseMessage;
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.model.Generation;
+import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.stereotype.Component;
+
+/**
+ * Deterministic stand-in for an LLM, active when no real model is configured
+ * ({@code spring.ai.model.chat=none}, the default).
+ *
+ * <p>It follows a fixed script that still goes through the real tool-calling loop: for a question
+ * mentioning a seller id and a date it requests {@code comparePayoutWithPreviousWeek}, then turns
+ * the tool result into a templated answer. This keeps the agent runnable and testable offline,
+ * without API keys or network access.
+ */
+@Component
+@ConditionalOnProperty(name = "spring.ai.model.chat", havingValue = "none")
+public class ScriptedChatModel implements ChatModel {
+
+    static final String COMPARISON_TOOL = "comparePayoutWithPreviousWeek";
+    static final String PREFIX = "[scripted model] ";
+
+    private static final Pattern SELLER_ID = Pattern.compile("seller-[A-Za-z0-9]+");
+    private static final Pattern DATE = Pattern.compile("\\d{4}-\\d{2}-\\d{2}");
+
+    private final ObjectMapper objectMapper;
+
+    public ScriptedChatModel(ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
+    }
+
+    @Override
+    public ChatResponse call(Prompt prompt) {
+        Message last = prompt.getInstructions().getLast();
+        AssistantMessage reply = last instanceof ToolResponseMessage toolResponses
+                ? summarize(toolResponses)
+                : planToolCall(last.getText());
+        return new ChatResponse(List.of(new Generation(reply)));
+    }
+
+    private AssistantMessage planToolCall(String question) {
+        Matcher seller = SELLER_ID.matcher(question);
+        Matcher date = DATE.matcher(question);
+        if (!seller.find() || !date.find()) {
+            return text("Please mention a seller id (e.g. seller-123) and a date inside the week to analyse "
+                    + "(YYYY-MM-DD). Enable the openai or ollama profile for free-form questions.");
+        }
+        String arguments = objectMapper.createObjectNode()
+                .put("sellerId", seller.group())
+                .put("weekOf", date.group())
+                .toString();
+        return AssistantMessage.builder()
+                .content("")
+                .toolCalls(List.of(new AssistantMessage.ToolCall("call-1", "function", COMPARISON_TOOL, arguments)))
+                .build();
+    }
+
+    private AssistantMessage summarize(ToolResponseMessage toolResponses) {
+        String data = toolResponses.getResponses().getFirst().responseData();
+        JsonNode comparison = parse(data);
+        if (comparison == null || !comparison.has("netChange")) {
+            return text("I couldn't get the payout data: " + data);
+        }
+        String currency = comparison.path("netChange").path("currency").asText();
+        String drivers = StreamSupport.stream(comparison.path("drivers").spliterator(), false)
+                .map(driver -> "%s (%s %s)".formatted(
+                        driver.path("component").asText().toLowerCase(Locale.ROOT),
+                        currency,
+                        amount(driver.path("effectOnNet").path("amount"))))
+                .collect(Collectors.joining(", "));
+        JsonNode percent = comparison.path("netChangePercent");
+        return text("Seller %s's net payout changed by %s %s%s compared with the previous week. Drivers, largest impact first: %s."
+                .formatted(
+                        comparison.path("current").path("sellerId").asText(),
+                        currency,
+                        amount(comparison.path("netChange").path("amount")),
+                        percent.isNumber()
+                                ? " (" + percent.decimalValue().setScale(1, RoundingMode.HALF_EVEN).toPlainString() + "%)"
+                                : "",
+                        drivers.isEmpty() ? "none" : drivers));
+    }
+
+    private JsonNode parse(String data) {
+        try {
+            return objectMapper.readTree(data);
+        } catch (JsonProcessingException notJson) {
+            return null;
+        }
+    }
+
+    private static String amount(JsonNode node) {
+        return node.decimalValue().setScale(2, RoundingMode.HALF_EVEN).toPlainString();
+    }
+
+    private static AssistantMessage text(String content) {
+        return new AssistantMessage(PREFIX + content);
+    }
+}
