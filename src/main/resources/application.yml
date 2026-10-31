@@ -37,6 +37,12 @@ management:
     web:
       exposure:
         include: health,info
+  otlp:
+    metrics:
+      export:
+        # spring-boot-starter-opentelemetry also brings the OTLP metrics registry, which would push to
+        # localhost:4318 every minute in every run. Only traces are exported (see application-tracing.yml).
+        enabled: false
   tracing:
     sampling:
       # Trace every agent request: traffic is low and each trace is an audit of what the model did.
