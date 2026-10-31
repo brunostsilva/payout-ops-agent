@@ -21,6 +21,16 @@ spring:
       audio:
         speech: none
         transcription: none
+    mcp:
+      server:
+        # Streamable HTTP endpoint at /mcp, serving the same tools as the agent (see McpToolsConfiguration).
+        name: payout-ops
+        version: 0.1.0
+        protocol: STREAMABLE
+        instructions: >-
+          Payout operations tools for a marketplace ledger. Use comparePayoutWithPreviousWeek to explain why a
+          seller's weekly payout changed, getLedgerEntries / getCommissionRules for details. proposePayoutHold
+          never holds anything: it only records a PENDING proposal that a human analyst must approve.
 
 management:
   endpoints:
