@@ -10,6 +10,17 @@ spring:
   mvc:
     problemdetails:
       enabled: true
+  ai:
+    model:
+      # No real LLM by default: the deterministic ScriptedChatModel answers instead, so the app
+      # and the tests run without API keys. Enable the "openai" or "ollama" profile for a real model.
+      chat: none
+      embedding: none
+      image: none
+      moderation: none
+      audio:
+        speech: none
+        transcription: none
 
 management:
   endpoints:
