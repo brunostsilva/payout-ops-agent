@@ -8,8 +8,9 @@ changed, by how much, and why.
 > **Status:** this is being built incrementally, one pull request per milestone (see the
 > [roadmap](#roadmap)). The current version contains the payout domain, persistence, a
 > reproducible demo scenario, a REST API, the **LLM agent** (Spring AI tool calling, with a
-> deterministic offline model, OpenAI and Ollama) and **human-in-the-loop payout holds**. The MCP
-> server and observability land in the next milestone.
+> deterministic offline model, OpenAI and Ollama), **human-in-the-loop payout holds**, an **MCP
+> server** exposing the same tools, and **OpenTelemetry tracing** viewable in Jaeger. Everything
+> runs locally for free (only the optional `openai` profile is paid).
 
 > **Note on the data:** all sellers, orders and amounts in `db/demo` are **synthetic**.
 
@@ -58,6 +59,10 @@ be tested exhaustively and reused by the REST API, the agent tools and the MCP s
   - analysts approve or reject proposals through `/api/holds`, and each hold can be decided
     **exactly once**, even with concurrent reviewers;
   - proposals are idempotent: at most one active (pending or approved) hold per seller and week.
+- **MCP server** (Streamable HTTP at `/mcp`): the same five tools, usable from Claude Desktop, MCP
+  Inspector or any other MCP client.
+- **Tracing** with Micrometer and OpenTelemetry: one span per agent request with every tool call
+  (and real model call) nested under it, exported to Jaeger over OTLP.
 - **Tests**: fast unit tests for the domain, application and agent layers, plus end-to-end
   integration tests against a real Postgres via **Testcontainers**.
 - **CI** on GitHub Actions running the full suite on Java 25.
@@ -73,6 +78,8 @@ flowchart LR
     Agent -->|executes| Tools[agent<br/>PayoutTools<br/>read-only]
     Agent -->|executes| Actions[agent<br/>PayoutActionTools<br/>propose only]
     Client -->|review holds| HoldAPI[api<br/>HoldController]
+    MCP([MCP client<br/>Claude Desktop · Inspector]) -->|/mcp| Tools
+    MCP -->|/mcp| Actions
     Tools --> App
     Actions --> Holds[application<br/>PayoutHoldService]
     HoldAPI --> Holds
@@ -223,6 +230,77 @@ In this demo an approved hold is a recorded decision. In production, approval wo
 payout gateway, and the analyst would come from the authenticated user rather than the request
 body.
 
+## MCP server
+
+The agent's tools are also published over the [Model Context Protocol](https://modelcontextprotocol.io)
+at `http://localhost:8080/mcp` (Streamable HTTP), by Spring AI's MCP server starter. External MCP
+clients therefore get **exactly the same** five tools, backed by the same services and guarantees.
+This includes `proposePayoutHold`, which can only create a `PENDING` proposal that a human must
+approve (see `McpToolsConfiguration`).
+
+**MCP Inspector** (free, needs Node.js):
+
+```bash
+npx @modelcontextprotocol/inspector
+# then connect to http://localhost:8080/mcp with transport "Streamable HTTP"
+```
+
+**Claude Desktop** launches MCP servers as local commands, so it reaches this HTTP server through
+the free [`mcp-remote`](https://github.com/geelen/mcp-remote) bridge (needs Node.js). Add this to
+`claude_desktop_config.json` (Settings → Developer → Edit Config) and restart Claude Desktop while
+the app is running:
+
+```json
+{
+  "mcpServers": {
+    "payout-ops": {
+      "command": "npx",
+      "args": ["mcp-remote", "http://localhost:8080/mcp"]
+    }
+  }
+}
+```
+
+Then ask Claude something like *"Why did seller-123's payout drop in the week of 2026-10-26?"*.
+Claude itself becomes the agent, calling `comparePayoutWithPreviousWeek` and friends on your
+local app.
+
+> There is no authentication on `/mcp` (nor on the REST API). That's fine for a local demo; add
+> auth before exposing either beyond localhost.
+
+## Observability
+
+Every agent request produces a trace:
+
+```
+payout agent ask                          payout.agent.ask (chat_model, tool_calls)
+├── chat <model>                          gen_ai.client.operation  (OpenAI / Ollama only)
+├── execute_tool comparePayoutWithPreviousWeek   spring.ai.tool
+├── chat <model>                          gen_ai.client.operation
+└── …
+```
+
+- `PayoutAgent` opens a `payout.agent.ask` observation per question and passes the
+  `ObservationRegistry` to Spring AI's `ToolCallingManager`. The manager defaults to a no-op
+  registry, so without that, tool calls would not be traced.
+- Model calls are instrumented by Spring AI's OpenAI and Ollama clients. The offline scripted
+  model is not, so with it you see the request span and the tool spans.
+- Prompts, completions and tool arguments/results are **not** recorded in spans by default
+  (`spring.ai.chat.observations.log-prompt`, `log-completion` and
+  `spring.ai.tools.observations.include-content` are all `false`), so ledger data doesn't leak
+  into the tracing backend.
+
+To see traces in Jaeger (free, runs in Docker):
+
+```bash
+docker compose --profile observability up -d     # Jaeger UI on http://localhost:16686
+mvn spring-boot:test-run -Dspring-boot.run.profiles=demo,tracing
+```
+
+Ask the agent a question, then open Jaeger and search for the `payout-ops-agent` service. Spans
+are exported over OTLP/HTTP only when the `tracing` profile is active. Without it no exporter is
+created, so tests and normal runs send nothing anywhere.
+
 ## Running locally
 
 Requirements: **Java 25**, **Maven 3.9+**, and **Docker** (for Postgres and the integration tests).
@@ -313,9 +391,10 @@ to the model so it can tell the user.
 | `OPENAI_CHAT_MODEL` | `gpt-4o-mini` | OpenAI model (`openai` profile) |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server (`ollama` profile) |
 | `OLLAMA_CHAT_MODEL` | `qwen2.5:7b` | Ollama model; must support tool calling (`ollama` profile) |
+| `OTLP_TRACES_ENDPOINT` | `http://localhost:4318/v1/traces` | OTLP/HTTP traces endpoint (`tracing` profile) |
 
 Spring profiles: `demo` loads the sample data; `openai` / `ollama` select the chat model (without
-either, the scripted model is used).
+either, the scripted model is used); `tracing` exports traces over OTLP.
 
 The demo seed is **opt-in**: it is only loaded when the `demo` Spring profile is active (see
 `application-demo.yml`). Without it, Flyway only applies the schema, so pointing the service at a
@@ -330,14 +409,16 @@ mvn verify
 - **Unit tests** (`domain`, `application`, `agent`): no Spring context, no Docker, run in
   milliseconds. The application layer is tested with in-memory repository implementations instead
   of mocks. `PayoutAgentTest` runs the real Spring AI tool-calling loop against in-memory data,
-  including tool errors, hold proposals and a model that never stops calling tools.
+  including tool errors, hold proposals and a model that never stops calling tools, and checks
+  with a `TestObservationRegistry` that tool spans are nested under the request span.
   `PayoutHoldTest` and `PayoutHoldServiceTest` cover the hold lifecycle, idempotent proposals and
   a decision lost to a concurrent one.
 - **Integration tests**: boot the full application against a real Postgres container.
   `PayoutDemoScenarioIntegrationTest`, `AgentEndpointIntegrationTest` and
   `HoldWorkflowIntegrationTest` run with the `demo` profile and exercise the service, the agent,
-  the hold workflow and the HTTP API end to end; `DefaultProfileIntegrationTest` checks that no
-  demo data is loaded without that profile.
+  the hold workflow and the HTTP API end to end; `McpServerIntegrationTest` starts the app on a
+  random port and uses a real MCP client to list and call the tools; `DefaultProfileIntegrationTest`
+  checks that no demo data is loaded without that profile.
 
 No test needs an API key or a running LLM: they all use the scripted model.
 
@@ -377,9 +458,10 @@ No test needs an API key or a running LLM: they all use the scripted model.
 |---|---|
 | Language | Java 25 (records, sealed interfaces, pattern matching) |
 | Framework | Spring Boot 4.1 (Spring Framework 7, Jackson 3) |
-| AI | Spring AI 2.0: tool calling, OpenAI and Ollama starters |
+| AI | Spring AI 2.0: tool calling, OpenAI and Ollama starters, MCP server |
 | Persistence | PostgreSQL 17, Flyway, `JdbcClient` |
-| Testing | JUnit 5, AssertJ, MockMvc, Testcontainers 2 |
+| Observability | Micrometer Observation, OpenTelemetry (OTLP), Jaeger |
+| Testing | JUnit 5, AssertJ, MockMvc, Testcontainers 2, MCP Java SDK client, `TestObservationRegistry` |
 | Build & CI | Maven, GitHub Actions, Dependabot |
 
 ## Roadmap
@@ -391,7 +473,7 @@ No test needs an API key or a running LLM: they all use the scripted model.
 - [x] **Platform upgrade**: Spring Boot 4.1 and Spring AI 2.0 (Jackson 3, Testcontainers 2)
 - [x] **Human-in-the-loop actions**: the agent can propose a payout hold, which stays pending
   until an analyst approves or rejects it via the API
-- [ ] **MCP server and observability**: expose the same tools over the Model Context Protocol
+- [x] **MCP server and observability**: expose the same tools over the Model Context Protocol
   (usable from Claude Desktop and other MCP clients); Micrometer/OpenTelemetry traces for every
   model and tool call, viewable in Jaeger via Docker Compose
 
