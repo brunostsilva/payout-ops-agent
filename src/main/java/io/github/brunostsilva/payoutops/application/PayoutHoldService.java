@@ -21,6 +21,8 @@ import org.springframework.stereotype.Service;
 @Service
 public class PayoutHoldService {
 
+    static final int MAX_PROPOSAL_ATTEMPTS = 3;
+
     private final SellerRepository sellers;
     private final PayoutHoldRepository holds;
     private final Clock clock;
@@ -39,16 +41,22 @@ public class PayoutHoldService {
         if (sellers.findById(sellerId).isEmpty()) {
             throw new SellerNotFoundException(sellerId);
         }
-        var existing = holds.findActive(sellerId, period);
-        if (existing.isPresent()) {
-            return existing.get();
-        }
-        PayoutHold hold = PayoutHold.propose(sellerId, period, reason, proposedBy, clock.instant());
-        try {
-            holds.insert(hold);
-            return hold;
-        } catch (DuplicateKeyException concurrentProposal) {
-            return holds.findActive(sellerId, period).orElseThrow(() -> concurrentProposal);
+        for (int attempt = 1; ; attempt++) {
+            var existing = holds.findActive(sellerId, period);
+            if (existing.isPresent()) {
+                return existing.get();
+            }
+            PayoutHold hold = PayoutHold.propose(sellerId, period, reason, proposedBy, clock.instant());
+            try {
+                holds.insert(hold);
+                return hold;
+            } catch (DuplicateKeyException concurrentProposal) {
+                // A concurrent proposal won the unique index. Look again: usually it is still active and we
+                // return it; if it was rejected in the meantime, the period is free and we try once more.
+                if (attempt == MAX_PROPOSAL_ATTEMPTS) {
+                    throw concurrentProposal;
+                }
+            }
         }
     }
 

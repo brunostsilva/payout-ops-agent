@@ -19,6 +19,7 @@ import java.time.ZoneOffset;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DuplicateKeyException;
 
 class PayoutHoldServiceTest {
 
@@ -92,6 +93,30 @@ class PayoutHoldServiceTest {
         assertThatThrownBy(() -> service.approve(hold.id(), "ana", null))
                 .isInstanceOf(HoldAlreadyDecidedException.class)
                 .hasMessageContaining("rejected");
+    }
+
+    @Test
+    void aProposalThatLosesARaceToAHoldRejectedMeanwhileIsRetried() {
+        // First insert: a concurrent proposal took the unique index and was rejected before our re-check,
+        // so the database says "duplicate" but the lookup finds no active hold.
+        InMemoryPayoutHoldRepository racingHolds = new InMemoryPayoutHoldRepository() {
+            private boolean lostTheRace;
+
+            @Override
+            public synchronized void insert(PayoutHold hold) {
+                if (!lostTheRace) {
+                    lostTheRace = true;
+                    throw new DuplicateKeyException("payout_holds_one_active_per_period");
+                }
+                super.insert(hold);
+            }
+        };
+        PayoutHoldService racingService = new PayoutHoldService(sellers, racingHolds, clock);
+
+        PayoutHold hold = racingService.propose(SELLER, WEEK, "two chargebacks", "agent");
+
+        assertThat(hold.status()).isEqualTo(HoldStatus.PENDING);
+        assertThat(racingHolds.findActive(SELLER, WEEK)).contains(hold);
     }
 
     @Test
