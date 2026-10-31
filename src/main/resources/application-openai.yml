@@ -5,6 +5,5 @@ spring:
     openai:
       api-key: ${OPENAI_API_KEY}
       chat:
-        options:
-          model: ${OPENAI_CHAT_MODEL:gpt-4o-mini}
-          temperature: 0
+        model: ${OPENAI_CHAT_MODEL:gpt-4o-mini}
+        temperature: 0

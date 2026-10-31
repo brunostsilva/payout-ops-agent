@@ -8,7 +8,6 @@ import static io.github.brunostsilva.payoutops.domain.LedgerFixtures.sale;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.brunostsilva.payoutops.application.PayoutService;
 import io.github.brunostsilva.payoutops.domain.LedgerEntry;
 import io.github.brunostsilva.payoutops.domain.PayoutPeriod;
@@ -26,6 +25,7 @@ import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
+import tools.jackson.databind.json.JsonMapper;
 
 /** Runs the real Spring AI tool-calling loop against in-memory data, without Spring or Docker. */
 class PayoutAgentTest {
@@ -48,7 +48,7 @@ class PayoutAgentTest {
 
     private final PayoutTools tools = new PayoutTools(payoutService);
     private final Clock clock = Clock.fixed(Instant.parse("2026-10-31T12:00:00Z"), ZoneOffset.UTC);
-    private final PayoutAgent agent = new PayoutAgent(new ScriptedChatModel(new ObjectMapper()), tools, clock);
+    private final PayoutAgent agent = new PayoutAgent(new ScriptedChatModel(new JsonMapper()), tools, clock);
 
     @Test
     void answersThroughTheComparisonToolAndTracesTheCall() {

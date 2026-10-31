@@ -2,7 +2,6 @@ package io.github.brunostsilva.payoutops.agent;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -10,10 +9,11 @@ import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.Prompt;
+import tools.jackson.databind.json.JsonMapper;
 
 class ScriptedChatModelTest {
 
-    private final ScriptedChatModel model = new ScriptedChatModel(new ObjectMapper());
+    private final ScriptedChatModel model = new ScriptedChatModel(new JsonMapper());
 
     @Test
     void requestsTheComparisonToolForASellerAndDate() {
