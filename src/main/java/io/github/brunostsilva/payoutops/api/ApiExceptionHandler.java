@@ -1,5 +1,6 @@
 package io.github.brunostsilva.payoutops.api;
 
+import io.github.brunostsilva.payoutops.agent.AgentLoopLimitExceededException;
 import io.github.brunostsilva.payoutops.application.SellerNotFoundException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
@@ -13,6 +14,13 @@ class ApiExceptionHandler {
     ProblemDetail sellerNotFound(SellerNotFoundException exception) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, exception.getMessage());
         problem.setTitle("Seller not found");
+        return problem;
+    }
+
+    @ExceptionHandler(AgentLoopLimitExceededException.class)
+    ProblemDetail agentLoopLimitExceeded(AgentLoopLimitExceededException exception) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_GATEWAY, exception.getMessage());
+        problem.setTitle("The model did not produce an answer");
         return problem;
     }
 }

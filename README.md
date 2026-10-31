@@ -7,8 +7,9 @@ changed, by how much, and why.
 
 > **Status:** this is being built incrementally, one pull request per milestone (see the
 > [roadmap](#roadmap)). The current version contains the payout domain, persistence, a
-> reproducible demo scenario and a REST API. The LLM agent, human-in-the-loop actions and the
-> MCP server land in the next milestones.
+> reproducible demo scenario, a REST API and the **LLM agent** (Spring AI tool calling, with a
+> deterministic offline model, OpenAI and Ollama). Human-in-the-loop actions and the MCP server
+> land in the next milestones.
 
 > **Note on the data:** all sellers, orders and amounts in `db/demo` are **synthetic**.
 
@@ -43,15 +44,28 @@ be tested exhaustively and reused by the REST API, the agent tools and the MCP s
 - **Persistence** with Postgres, Flyway migrations and Spring's `JdbcClient` (plain SQL, no ORM).
 - **Reproducible demo scenario** seeded by a repeatable Flyway migration.
 - **REST API** with `ProblemDetail` (RFC 9457) error responses.
-- **Tests**: fast unit tests for the domain and application layers, plus end-to-end integration
-  tests against a real Postgres via **Testcontainers**.
+- **LLM agent** (`agent/`) built on **Spring AI**:
+  - four read-only `@Tool`s over the payout service (comparison, weekly payout, ledger entries,
+    commission rules);
+  - a tool-calling loop driven by the application, which returns a **trace of every tool call**
+    with the answer and stops models that never converge;
+  - `POST /api/agent/ask`;
+  - a deterministic **scripted model** used by default (no API key needed), plus `openai` and
+    `ollama` (local, free) profiles for real LLMs.
+- **Tests**: fast unit tests for the domain, application and agent layers, plus end-to-end
+  integration tests against a real Postgres via **Testcontainers**.
 - **CI** on GitHub Actions running the full suite on Java 25.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    Client([Analyst / client]) -->|HTTP| API[api<br/>PayoutController]
+    Client([Analyst / client]) -->|GET payouts| API[api<br/>PayoutController]
+    Client -->|POST /api/agent/ask| AgentAPI[api<br/>AgentController]
+    AgentAPI --> Agent[agent<br/>PayoutAgent]
+    Agent <-->|prompt / tool calls| LLM{{ChatModel<br/>scripted · OpenAI · Ollama}}
+    Agent -->|executes| Tools[agent<br/>PayoutTools<br/>read-only]
+    Tools --> App
     API --> App[application<br/>PayoutService]
     App --> Domain[domain<br/>PayoutCalculator · PayoutComparison<br/>LedgerEntry · Money]
     App --> Ports{{domain repositories<br/>SellerRepository · LedgerRepository<br/>CommissionRuleRepository}}
@@ -66,7 +80,8 @@ The layers follow a ports-and-adapters style:
 | `domain` | Business rules and repository interfaces. No Spring, no SQL. | — |
 | `application` | Use cases (`PayoutService`), orchestrating domain and repositories. | `domain` |
 | `infrastructure.persistence` | `JdbcClient` implementations of the domain repositories. | `domain` |
-| `api` | REST controllers and response DTOs (the API never exposes domain objects directly). | `application` |
+| `agent` | LLM orchestration: the tool-calling loop, the read-only tools and the scripted model. | `application`, `api` DTOs |
+| `api` | REST controllers and response DTOs (the API never exposes domain objects directly). | `application`, `agent` |
 
 ## The demo scenario
 
@@ -88,6 +103,69 @@ from the previous week were charged back, and a logistics fee correction was app
 `seller-456` (Nimbus Home) is a stable control seller. The integration tests assert these exact
 numbers, so the seed and the documentation cannot drift apart silently.
 
+## The agent
+
+`POST /api/agent/ask` takes a question in natural language. `PayoutAgent` sends it to the
+configured chat model together with the definitions of four read-only tools. Whenever the model
+asks for a tool, the agent executes it, feeds the result back, and repeats until the model
+answers:
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant A as PayoutAgent
+    participant M as ChatModel
+    participant T as PayoutTools
+    C->>A: POST /api/agent/ask {question}
+    A->>M: system prompt + question + tool definitions
+    M-->>A: tool call: comparePayoutWithPreviousWeek(seller-123, 2026-10-26)
+    A->>T: execute (read-only, via PayoutService)
+    T-->>A: breakdowns, net change, drivers (JSON)
+    A->>M: conversation + tool result
+    M-->>A: final answer
+    A-->>C: {answer, toolCalls: [{tool, arguments, result}]}
+```
+
+| Tool | What it returns |
+|---|---|
+| `comparePayoutWithPreviousWeek(sellerId, weekOf)` | Both weekly breakdowns, net change, percentage and drivers sorted by impact |
+| `getWeeklyPayout(sellerId, weekOf)` | One week's breakdown |
+| `getLedgerEntries(sellerId, weekOf)` | Individual entries, including chargeback reasons and adjustment descriptions |
+| `getCommissionRules(sellerId)` | Commission rate history with the reason for each change |
+
+The model is chosen with a Spring profile:
+
+| Profile | Model | Needs |
+|---|---|---|
+| _(none)_ | `ScriptedChatModel`: deterministic, follows a fixed script (asks for the comparison tool, then templates the answer) | Nothing. Used by the tests and for demos without API keys. |
+| `openai` | OpenAI chat model (`gpt-4o-mini` by default) | `OPENAI_API_KEY` |
+| `ollama` | Local model through Ollama (`qwen2.5:7b` by default, pulled on first start) | Ollama running locally (`docker compose --profile ollama up -d`) |
+
+Every response carries the full trace of tool calls, so an analyst can check exactly which data
+backed the answer:
+
+```bash
+curl -X POST localhost:8080/api/agent/ask -H "Content-Type: application/json" \
+  -d '{"question": "Why did seller-123'\''s payout drop in the week of 2026-10-26?"}'
+```
+
+```json
+{
+  "answer": "[scripted model] Seller seller-123's net payout changed by BRL -2420.00 (-27.5%) compared with the previous week. Drivers, largest impact first: chargebacks (BRL -1200.00), adjustments (BRL -600.00), commissions (BRL -470.00), sales (BRL -200.00), refunds (BRL 50.00).",
+  "toolCalls": [
+    {
+      "tool": "comparePayoutWithPreviousWeek",
+      "arguments": "{\"sellerId\":\"seller-123\",\"weekOf\":\"2026-10-26\"}",
+      "result": "{\"previous\":{...},\"current\":{...},\"netChange\":{...},\"drivers\":[...]}"
+    }
+  ]
+}
+```
+
+With the `openai` or `ollama` profile, the same question gets a natural-language explanation,
+and follow-ups such as *"which orders were charged back?"* make the model call
+`getLedgerEntries` as well.
+
 ## Running locally
 
 Requirements: **Java 25**, **Maven 3.9+**, and **Docker** (for Postgres and the integration tests).
@@ -104,6 +182,17 @@ mvn spring-boot:test-run
 ```bash
 docker compose up -d
 mvn spring-boot:run -Dspring-boot.run.profiles=demo
+```
+
+**Using a real LLM** (profiles can be combined):
+
+```bash
+# OpenAI
+OPENAI_API_KEY=sk-... mvn spring-boot:test-run -Dspring-boot.run.profiles=demo,openai
+
+# Ollama, fully local and free (the first start downloads the model, a few GB)
+docker compose --profile ollama up -d
+mvn spring-boot:test-run -Dspring-boot.run.profiles=demo,ollama
 ```
 
 Then try the API:
@@ -142,9 +231,13 @@ Example response from the comparison endpoint (abridged):
 | `GET` | `/api/sellers/{sellerId}/payouts?weekOf=YYYY-MM-DD` | Payout breakdown for the Monday–Sunday week containing `weekOf`. |
 | `GET` | `/api/sellers/{sellerId}/payouts/comparison?weekOf=YYYY-MM-DD` | Compares that week with the previous one: net change, percentage and drivers sorted by impact. |
 | `GET` | `/api/sellers/{sellerId}/commission-rules` | Commission rate history, oldest first. |
+| `POST` | `/api/agent/ask` | Body `{"question": "..."}`. Returns `{answer, toolCalls}`, the answer plus the trace of every tool call. |
 | `GET` | `/actuator/health` | Health check. |
 
-Unknown sellers return `404` with a `ProblemDetail` body.
+Unknown sellers return `404`, invalid input (blank seller id or question) returns `400`, and a
+model that keeps calling tools without answering returns `502`, all with a `ProblemDetail` body.
+Inside the agent, tool errors such as an unknown seller are not HTTP errors: they are passed back
+to the model so it can tell the user.
 
 ## Configuration
 
@@ -153,6 +246,13 @@ Unknown sellers return `404` with a `ProblemDetail` body.
 | `DATABASE_URL` | `jdbc:postgresql://localhost:5432/payoutops` | JDBC URL |
 | `DATABASE_USERNAME` | `payoutops` | Database user |
 | `DATABASE_PASSWORD` | `payoutops` | Database password |
+| `OPENAI_API_KEY` | _(none)_ | Required by the `openai` profile |
+| `OPENAI_CHAT_MODEL` | `gpt-4o-mini` | OpenAI model (`openai` profile) |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server (`ollama` profile) |
+| `OLLAMA_CHAT_MODEL` | `qwen2.5:7b` | Ollama model; must support tool calling (`ollama` profile) |
+
+Spring profiles: `demo` loads the sample data; `openai` / `ollama` select the chat model (without
+either, the scripted model is used).
 
 The demo seed is **opt-in**: it is only loaded when the `demo` Spring profile is active (see
 `application-demo.yml`). Without it, Flyway only applies the schema, so pointing the service at a
@@ -164,12 +264,16 @@ real database never inserts synthetic sellers or ledger entries.
 mvn verify
 ```
 
-- **Unit tests** (`domain`, `application`): no Spring context, no Docker, run in milliseconds.
-  The application layer is tested with in-memory repository implementations instead of mocks.
+- **Unit tests** (`domain`, `application`, `agent`): no Spring context, no Docker, run in
+  milliseconds. The application layer is tested with in-memory repository implementations instead
+  of mocks. `PayoutAgentTest` runs the real Spring AI tool-calling loop against in-memory data,
+  including tool errors and a model that never stops calling tools.
 - **Integration tests**: boot the full application against a real Postgres container.
-  `PayoutDemoScenarioIntegrationTest` runs with the `demo` profile and exercises the service and
-  the HTTP API end to end; `DefaultProfileIntegrationTest` checks that no demo data is loaded
-  without that profile.
+  `PayoutDemoScenarioIntegrationTest` and `AgentEndpointIntegrationTest` run with the `demo`
+  profile and exercise the service, the agent and the HTTP API end to end;
+  `DefaultProfileIntegrationTest` checks that no demo data is loaded without that profile.
+
+No test needs an API key or a running LLM: they all use the scripted model.
 
 ## Design decisions
 
@@ -180,25 +284,38 @@ mvn verify
   construction, so `10` and `10.00` are equal, and mixing currencies fails fast.
 - **Drivers that add up.** `PayoutComparison.drivers()` is computed per component as
   `current − previous` of each component's signed effect on the net payout, so the drivers always
-  sum to the net change. This is the property the agent will rely on to explain changes without
-  doing arithmetic itself.
+  sum to the net change. The agent relies on this property to explain changes without doing
+  arithmetic itself.
 - **`JdbcClient` instead of JPA.** The ledger is append-only and read through a few explicit
   queries; plain SQL keeps the mapping to the sealed hierarchy obvious and avoids ORM overhead.
 - **Repeatable migration for demo data.** Schema changes stay in versioned migrations; the demo
   seed lives in its own location, behind the `demo` profile, and replaces the demo sellers' data
   wholesale every time it changes, so the database can never drift from the file.
+- **Application-driven tool execution.** Spring AI can run tools inside the model client, but here
+  `PayoutAgent` disables that (`internalToolExecutionEnabled(false)`) and runs the loop itself
+  with `ToolCallingManager`. That makes the tool trace a first-class part of the response and lets
+  the agent cap the number of tool rounds, so a misbehaving model fails fast with a `502` instead
+  of looping and burning tokens.
+- **The model only reads through tools.** Tools are thin, read-only adapters over
+  `PayoutService` and return the same DTOs as the REST API. The system prompt tells the model to
+  take every number from the tools; the drivers already add up to the net change, so the model
+  never has to do arithmetic.
+- **A scripted model instead of mocks.** `ScriptedChatModel` implements Spring AI's `ChatModel`
+  and goes through the real tool-calling loop, so the tests (and anyone trying the project
+  without an API key) exercise the same code path as OpenAI or Ollama.
 
 ## Roadmap
 
 - [x] **Domain, persistence and API**: payout model, Postgres + Flyway, demo scenario, REST API, tests, CI
-- [ ] **LLM agent**: Spring AI `ChatClient` with read-only `@Tool`s over the payout service;
-  `POST /agent/ask` returning the answer plus a trace of the tools it called; profiles for a
-  deterministic fake model (tests), OpenAI and Ollama (local, free)
+- [x] **LLM agent**: Spring AI tool calling with read-only `@Tool`s over the payout service;
+  `POST /api/agent/ask` returning the answer plus a trace of the tools it called; a deterministic
+  scripted model (default and tests), OpenAI and Ollama (local, free) profiles
 - [ ] **Human-in-the-loop actions**: the agent can propose a payout hold, which stays pending
   until an analyst approves or rejects it via the API
 - [ ] **MCP server and observability**: expose the same tools over the Model Context Protocol
   (usable from Claude Desktop and other MCP clients); Micrometer/OpenTelemetry traces for every
   model and tool call, viewable in Jaeger via Docker Compose
+- [ ] **Platform upgrade**: Spring Boot 4 and Spring AI 2
 
 ## License
 
