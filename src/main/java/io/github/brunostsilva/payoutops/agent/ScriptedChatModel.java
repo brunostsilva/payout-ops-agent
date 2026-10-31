@@ -1,8 +1,6 @@
 package io.github.brunostsilva.payoutops.agent;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.List;
 import java.util.Locale;
@@ -19,6 +17,9 @@ import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Deterministic stand-in for an LLM, active when no real model is configured
@@ -39,10 +40,10 @@ public class ScriptedChatModel implements ChatModel {
     private static final Pattern SELLER_ID = Pattern.compile("seller-[A-Za-z0-9]+");
     private static final Pattern DATE = Pattern.compile("\\d{4}-\\d{2}-\\d{2}");
 
-    private final ObjectMapper objectMapper;
+    private final JsonMapper jsonMapper;
 
-    public ScriptedChatModel(ObjectMapper objectMapper) {
-        this.objectMapper = objectMapper;
+    public ScriptedChatModel(JsonMapper jsonMapper) {
+        this.jsonMapper = jsonMapper;
     }
 
     @Override
@@ -61,7 +62,7 @@ public class ScriptedChatModel implements ChatModel {
             return text("Please mention a seller id (e.g. seller-123) and a date inside the week to analyse "
                     + "(YYYY-MM-DD). Enable the openai or ollama profile for free-form questions.");
         }
-        String arguments = objectMapper.createObjectNode()
+        String arguments = jsonMapper.createObjectNode()
                 .put("sellerId", seller.group())
                 .put("weekOf", date.group())
                 .toString();
@@ -77,17 +78,17 @@ public class ScriptedChatModel implements ChatModel {
         if (comparison == null || !comparison.has("netChange")) {
             return text("I couldn't get the payout data: " + data);
         }
-        String currency = comparison.path("netChange").path("currency").asText();
+        String currency = comparison.path("netChange").path("currency").asString();
         String drivers = StreamSupport.stream(comparison.path("drivers").spliterator(), false)
                 .map(driver -> "%s (%s %s)".formatted(
-                        driver.path("component").asText().toLowerCase(Locale.ROOT),
+                        driver.path("component").asString().toLowerCase(Locale.ROOT),
                         currency,
                         amount(driver.path("effectOnNet").path("amount"))))
                 .collect(Collectors.joining(", "));
         JsonNode percent = comparison.path("netChangePercent");
         return text("Seller %s's net payout changed by %s %s%s compared with the previous week. Drivers, largest impact first: %s."
                 .formatted(
-                        comparison.path("current").path("sellerId").asText(),
+                        comparison.path("current").path("sellerId").asString(),
                         currency,
                         amount(comparison.path("netChange").path("amount")),
                         percent.isNumber()
@@ -97,15 +98,19 @@ public class ScriptedChatModel implements ChatModel {
     }
 
     private JsonNode parse(String data) {
+        if (data == null) {
+            return null;
+        }
         try {
-            return objectMapper.readTree(data);
-        } catch (JsonProcessingException notJson) {
+            return jsonMapper.readTree(data);
+        } catch (JacksonException notJson) {
             return null;
         }
     }
 
     private static String amount(JsonNode node) {
-        return node.decimalValue().setScale(2, RoundingMode.HALF_EVEN).toPlainString();
+        // Jackson 3's decimalValue() throws on missing/non-numeric nodes; default to zero instead.
+        return node.decimalValue(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_EVEN).toPlainString();
     }
 
     private static AssistantMessage text(String content) {

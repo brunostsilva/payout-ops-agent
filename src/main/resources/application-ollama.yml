@@ -9,7 +9,6 @@ spring:
         pull-model-strategy: when_missing
         timeout: 15m
       chat:
-        options:
-          # Needs a model with tool-calling support.
-          model: "${OLLAMA_CHAT_MODEL:qwen2.5:7b}"
-          temperature: 0
+        # Needs a model with tool-calling support.
+        model: "${OLLAMA_CHAT_MODEL:qwen2.5:7b}"
+        temperature: 0

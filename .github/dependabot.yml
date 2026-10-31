@@ -10,7 +10,7 @@ updates:
       maven-minor-and-patch:
         update-types: [minor, patch]
     ignore:
-      # Spring Boot 4 / Spring AI 2 are planned migrations (see README roadmap), not bot bumps.
+      # Major Spring Boot / Spring AI upgrades are planned migrations, not bot bumps.
       - dependency-name: "org.springframework.boot:*"
         update-types: ["version-update:semver-major"]
       - dependency-name: "org.springframework.ai:*"
