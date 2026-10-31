@@ -22,5 +22,15 @@ services:
     volumes:
       - ollama-models:/root/.ollama
 
+  # Trace backend for the "tracing" Spring profile (UI on http://localhost:16686).
+  # Only started with: docker compose --profile observability up -d
+  jaeger:
+    image: jaegertracing/jaeger:2.22.0
+    profiles: ["observability"]
+    ports:
+      - "16686:16686" # UI
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP (used by the app)
+
 volumes:
   ollama-models:

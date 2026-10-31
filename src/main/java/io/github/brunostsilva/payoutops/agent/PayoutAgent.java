@@ -1,5 +1,7 @@
 package io.github.brunostsilva.payoutops.agent;
 
+import io.micrometer.observation.Observation;
+import io.micrometer.observation.ObservationRegistry;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -15,6 +17,8 @@ import org.springframework.ai.model.tool.ToolCallingManager;
 import org.springframework.ai.model.tool.ToolExecutionResult;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.method.MethodToolCallbackProvider;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 /**
@@ -24,11 +28,16 @@ import org.springframework.stereotype.Service;
  * executes them with {@link ToolCallingManager} and loops until the model answers. Owning the loop
  * lets it record every call for the response trace and stop a model that keeps requesting tools
  * without converging on an answer.
+ *
+ * <p>Each question is one {@value #OBSERVATION_NAME} observation (a span when tracing is enabled), and
+ * the tool calls ({@code spring.ai.tool}) and provider model calls ({@code gen_ai.client.operation})
+ * made while answering it are nested under it.
  */
 @Service
 public class PayoutAgent {
 
     static final int MAX_TOOL_ROUNDS = 5;
+    static final String OBSERVATION_NAME = "payout.agent.ask";
 
     private static final String SYSTEM_PROMPT = """
             You are a payout operations assistant for a marketplace. You help analysts understand sellers' payouts.
@@ -48,18 +57,54 @@ public class PayoutAgent {
     private final ChatModel chatModel;
     private final Clock clock;
     private final List<ToolCallback> tools;
-    private final ToolCallingManager toolCallingManager = ToolCallingManager.builder().build();
+    private final ObservationRegistry observations;
+    private final ToolCallingManager toolCallingManager;
 
-    public PayoutAgent(ChatModel chatModel, PayoutTools payoutTools, PayoutActionTools actionTools, Clock clock) {
+    @Autowired
+    public PayoutAgent(
+            ChatModel chatModel,
+            PayoutTools payoutTools,
+            PayoutActionTools actionTools,
+            Clock clock,
+            ObjectProvider<ObservationRegistry> observations) {
+        this(chatModel, payoutTools, actionTools, clock, observations.getIfAvailable(() -> ObservationRegistry.NOOP));
+    }
+
+    public PayoutAgent(
+            ChatModel chatModel,
+            PayoutTools payoutTools,
+            PayoutActionTools actionTools,
+            Clock clock,
+            ObservationRegistry observations) {
         this.chatModel = chatModel;
         this.clock = clock;
+        this.observations = observations;
         this.tools = List.of(MethodToolCallbackProvider.builder()
                 .toolObjects(payoutTools, actionTools)
                 .build()
                 .getToolCallbacks());
+        // The manager defaults to a no-op registry: without this, tool calls would not be traced.
+        this.toolCallingManager = ToolCallingManager.builder().observationRegistry(observations).build();
     }
 
     public AgentAnswer ask(String question) {
+        Observation observation = Observation.createNotStarted(OBSERVATION_NAME, observations)
+                .contextualName("payout agent ask")
+                .lowCardinalityKeyValue("payout.agent.chat_model", chatModel.getClass().getSimpleName())
+                .start();
+        try (Observation.Scope scope = observation.openScope()) {
+            AgentAnswer answer = answer(question);
+            observation.highCardinalityKeyValue("payout.agent.tool_calls", String.valueOf(answer.toolCalls().size()));
+            return answer;
+        } catch (RuntimeException failure) {
+            observation.error(failure);
+            throw failure;
+        } finally {
+            observation.stop();
+        }
+    }
+
+    private AgentAnswer answer(String question) {
         ToolCallingChatOptions options = requestOptions();
         Prompt prompt = new Prompt(
                 List.of(new SystemMessage(SYSTEM_PROMPT.formatted(LocalDate.now(clock))), new UserMessage(question)),

@@ -1,0 +1,8 @@
+# Opt-in profile that exports traces over OTLP (HTTP), e.g. to the Jaeger service in compose.yaml.
+# Without it no OTLP endpoint is set, so Spring Boot creates no exporter and nothing leaves the process.
+management:
+  opentelemetry:
+    tracing:
+      export:
+        otlp:
+          endpoint: ${OTLP_TRACES_ENDPOINT:http://localhost:4318/v1/traces}

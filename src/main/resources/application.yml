@@ -21,9 +21,30 @@ spring:
       audio:
         speech: none
         transcription: none
+    mcp:
+      server:
+        # Streamable HTTP endpoint at /mcp, serving the same tools as the agent (see McpToolsConfiguration).
+        name: payout-ops
+        version: 0.1.0
+        protocol: STREAMABLE
+        instructions: >-
+          Payout operations tools for a marketplace ledger. Use comparePayoutWithPreviousWeek to explain why a
+          seller's weekly payout changed, getLedgerEntries / getCommissionRules for details. proposePayoutHold
+          never holds anything: it only records a PENDING proposal that a human analyst must approve.
 
 management:
   endpoints:
     web:
       exposure:
         include: health,info
+  otlp:
+    metrics:
+      export:
+        # spring-boot-starter-opentelemetry also brings the OTLP metrics registry, which would push to
+        # localhost:4318 every minute in every run. Only traces are exported (see application-tracing.yml).
+        enabled: false
+  tracing:
+    sampling:
+      # Trace every agent request: traffic is low and each trace is an audit of what the model did.
+      # Spans are only exported when the "tracing" profile sets an OTLP endpoint.
+      probability: 1.0

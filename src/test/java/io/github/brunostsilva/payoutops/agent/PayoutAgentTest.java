@@ -16,6 +16,8 @@ import io.github.brunostsilva.payoutops.domain.LedgerEntry;
 import io.github.brunostsilva.payoutops.domain.PayoutPeriod;
 import io.github.brunostsilva.payoutops.domain.Seller;
 import io.github.brunostsilva.payoutops.domain.SellerRepository;
+import io.micrometer.observation.tck.TestObservationRegistry;
+import io.micrometer.observation.tck.TestObservationRegistryAssert;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -57,12 +59,13 @@ class PayoutAgentTest {
             sellerId -> List.of());
 
     private final Clock clock = Clock.fixed(Instant.parse("2026-10-31T12:00:00Z"), ZoneOffset.UTC);
+    private final TestObservationRegistry observations = TestObservationRegistry.create();
     private final InMemoryPayoutHoldRepository holds = new InMemoryPayoutHoldRepository();
     private final PayoutTools tools = new PayoutTools(payoutService);
     private final PayoutActionTools actionTools =
             new PayoutActionTools(new PayoutHoldService(sellers, holds, clock));
     private final PayoutAgent agent =
-            new PayoutAgent(new ScriptedChatModel(new JsonMapper()), tools, actionTools, clock);
+            new PayoutAgent(new ScriptedChatModel(new JsonMapper()), tools, actionTools, clock, observations);
 
     @Test
     void answersThroughTheComparisonToolAndTracesTheCall() {
@@ -118,7 +121,7 @@ class PayoutAgentTest {
             }
         };
 
-        AgentAnswer answer = new PayoutAgent(parallelCallsWithoutIds, tools, actionTools, clock).ask("anything");
+        AgentAnswer answer = new PayoutAgent(parallelCallsWithoutIds, tools, actionTools, clock, observations).ask("anything");
 
         assertThat(answer.toolCalls()).extracting(ToolInvocation::tool)
                 .containsExactly("getWeeklyPayout", "getCommissionRules");
@@ -144,7 +147,7 @@ class PayoutAgentTest {
             }
         };
 
-        new PayoutAgent(providerLike, tools, actionTools, clock).ask("anything");
+        new PayoutAgent(providerLike, tools, actionTools, clock, observations).ask("anything");
 
         assertThat(sentOptions).singleElement().isInstanceOfSatisfying(OpenAiChatOptions.class, options -> {
             assertThat(options.getModel()).isEqualTo("gpt-test");
@@ -202,8 +205,31 @@ class PayoutAgentTest {
             }
         };
 
-        assertThatThrownBy(() -> new PayoutAgent(alwaysCallsTools, tools, actionTools, clock).ask("anything"))
+        PayoutAgent looping = new PayoutAgent(alwaysCallsTools, tools, actionTools, clock, observations);
+
+        assertThatThrownBy(() -> looping.ask("anything"))
                 .isInstanceOf(AgentLoopLimitExceededException.class)
                 .hasMessageContaining(String.valueOf(PayoutAgent.MAX_TOOL_ROUNDS));
+        TestObservationRegistryAssert.assertThat(observations)
+                .hasObservationWithNameEqualTo(PayoutAgent.OBSERVATION_NAME)
+                .that()
+                .hasError();
+    }
+
+    @Test
+    void tracesEachRequestWithItsToolCallsNestedUnderIt() {
+        agent.ask("Why did seller-1's payout change in the week of 2026-10-26?");
+
+        TestObservationRegistryAssert.assertThat(observations)
+                .hasObservationWithNameEqualTo(PayoutAgent.OBSERVATION_NAME)
+                .that()
+                .hasLowCardinalityKeyValue("payout.agent.chat_model", "ScriptedChatModel")
+                .hasHighCardinalityKeyValue("payout.agent.tool_calls", "1");
+        TestObservationRegistryAssert.assertThat(observations)
+                .hasNumberOfObservationsWithNameEqualTo("spring.ai.tool", 1)
+                .hasObservationWithNameEqualTo("spring.ai.tool")
+                .that()
+                .hasParentObservationContextMatching(
+                        parent -> PayoutAgent.OBSERVATION_NAME.equals(parent.getName()));
     }
 }
