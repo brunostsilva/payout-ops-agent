@@ -185,7 +185,8 @@ mvn verify
 - **`JdbcClient` instead of JPA.** The ledger is append-only and read through a few explicit
   queries; plain SQL keeps the mapping to the sealed hierarchy obvious and avoids ORM overhead.
 - **Repeatable migration for demo data.** Schema changes stay in versioned migrations; the demo
-  seed is idempotent (`ON CONFLICT DO NOTHING`) and isolated in its own location.
+  seed lives in its own location, behind the `demo` profile, and replaces the demo sellers' data
+  wholesale every time it changes, so the database can never drift from the file.
 
 ## Roadmap
 

@@ -8,17 +8,23 @@
 --   * slightly lower sales                                      (  -200.00)
 --   * fewer refunds                                             (   +50.00)
 -- seller-456 (Nimbus Home) is a stable control seller.
+--
+-- This file owns all data of the demo sellers: Flyway re-runs it whenever its checksum changes,
+-- and it replaces their rules and ledger wholesale, so the database always mirrors this file
+-- (edited or removed rows included).
+
+DELETE FROM ledger_entries WHERE seller_id IN ('seller-123', 'seller-456');
+DELETE FROM commission_rules WHERE seller_id IN ('seller-123', 'seller-456');
 
 INSERT INTO sellers (id, name, currency) VALUES
     ('seller-123', 'Aurora Cosmetics', 'BRL'),
     ('seller-456', 'Nimbus Home', 'BRL')
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, currency = EXCLUDED.currency;
 
 INSERT INTO commission_rules (seller_id, rate, valid_from, reason) VALUES
     ('seller-123', 0.1000, DATE '2025-01-01', 'Standard marketplace rate'),
     ('seller-123', 0.1500, DATE '2026-10-26', 'Category reclassified to Premium Beauty'),
-    ('seller-456', 0.1000, DATE '2025-01-01', 'Standard marketplace rate')
-ON CONFLICT (seller_id, valid_from) DO NOTHING;
+    ('seller-456', 0.1000, DATE '2025-01-01', 'Standard marketplace rate');
 
 INSERT INTO ledger_entries (id, seller_id, entry_type, amount, currency, occurred_on, order_id, description) VALUES
     -- seller-123, week of 2026-10-19
@@ -45,5 +51,4 @@ INSERT INTO ledger_entries (id, seller_id, entry_type, amount, currency, occurre
     ('le-456-0002', 'seller-456', 'COMMISSION',  500.00, 'BRL', DATE '2026-10-21', 'o-2001', NULL),
     -- seller-456, week of 2026-10-26
     ('le-456-0101', 'seller-456', 'SALE',       5200.00, 'BRL', DATE '2026-10-28', 'o-2101', NULL),
-    ('le-456-0102', 'seller-456', 'COMMISSION',  520.00, 'BRL', DATE '2026-10-28', 'o-2101', NULL)
-ON CONFLICT (id) DO NOTHING;
+    ('le-456-0102', 'seller-456', 'COMMISSION',  520.00, 'BRL', DATE '2026-10-28', 'o-2101', NULL);

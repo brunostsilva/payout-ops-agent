@@ -14,11 +14,15 @@ import io.github.brunostsilva.payoutops.domain.PayoutPeriod;
 import io.github.brunostsilva.payoutops.domain.SellerId;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -37,6 +41,32 @@ class PayoutDemoScenarioIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private JdbcClient jdbc;
+
+    @Autowired
+    private DataSource dataSource;
+
+    @Test
+    void reapplyingTheSeedRestoresEditedRowsAndRemovesExtraOnes() {
+        jdbc.sql("UPDATE ledger_entries SET amount = 1.00 WHERE id = 'le-123-0105'").update();
+        jdbc.sql("""
+                INSERT INTO ledger_entries (id, seller_id, entry_type, amount, currency, occurred_on)
+                VALUES ('le-stray', 'seller-123', 'SALE', 999.00, 'BRL', DATE '2026-10-27')
+                """).update();
+
+        new ResourceDatabasePopulator(new ClassPathResource("db/demo/R__demo_seed.sql")).execute(dataSource);
+
+        assertThat(jdbc.sql("SELECT amount FROM ledger_entries WHERE id = 'le-123-0105'")
+                        .query(BigDecimal.class)
+                        .single())
+                .isEqualByComparingTo("700.00");
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM ledger_entries WHERE id = 'le-stray'")
+                        .query(Long.class)
+                        .single())
+                .isZero();
+    }
 
     @Test
     void seedReproducesTheDocumentedPayoutDrop() {
