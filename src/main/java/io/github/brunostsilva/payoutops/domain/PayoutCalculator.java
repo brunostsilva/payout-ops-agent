@@ -25,6 +25,11 @@ public final class PayoutCalculator {
                 throw new IllegalArgumentException(
                         "Entry " + entry.id() + " on " + entry.occurredOn() + " is outside " + period);
             }
+            if (!entry.amount().currency().equals(currency)) {
+                throw new IllegalArgumentException("Entry " + entry.id() + " is in "
+                        + entry.amount().currency().getCurrencyCode() + " but seller " + sellerId
+                        + " settles in " + currency.getCurrencyCode());
+            }
             switch (entry) {
                 case LedgerEntry.Sale sale -> sales = sales.plus(sale.amount());
                 case LedgerEntry.Commission commission -> commissions = commissions.plus(commission.amount());

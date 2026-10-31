@@ -68,6 +68,17 @@ class PayoutCalculatorTest {
     }
 
     @Test
+    void rejectsEntriesInAnotherCurrencyNamingTheEntry() {
+        LedgerEntry usd = new LedgerEntry.Sale("le-usd", SELLER, DAY, Money.of("10", "USD"), "o-usd");
+
+        assertThatThrownBy(() -> PayoutCalculator.calculate(SELLER, WEEK, BRL, List.of(usd)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("le-usd")
+                .hasMessageContaining("USD")
+                .hasMessageContaining("BRL");
+    }
+
+    @Test
     void ledgerEntriesRejectNegativeAmountsExceptAdjustments() {
         assertThatThrownBy(() -> sale("-1.00", DAY)).isInstanceOf(IllegalArgumentException.class);
         assertThat(adjustment("-1.00", DAY).amount().isNegative()).isTrue();

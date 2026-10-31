@@ -1,6 +1,7 @@
 package io.github.brunostsilva.payoutops.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -21,6 +22,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 import org.springframework.test.context.ActiveProfiles;
@@ -47,6 +49,16 @@ class PayoutDemoScenarioIntegrationTest {
 
     @Autowired
     private DataSource dataSource;
+
+    @Test
+    void databaseRejectsLedgerEntriesInAnotherCurrencyThanTheSeller() {
+        assertThatThrownBy(() -> jdbc.sql("""
+                        INSERT INTO ledger_entries (id, seller_id, entry_type, amount, currency, occurred_on)
+                        VALUES ('le-usd', 'seller-123', 'SALE', 10.00, 'USD', DATE '2026-10-27')
+                        """).update())
+                .isInstanceOf(DataIntegrityViolationException.class)
+                .hasMessageContaining("ledger_entries_seller_currency_fkey");
+    }
 
     @Test
     void reapplyingTheSeedRestoresEditedRowsAndRemovesExtraOnes() {
