@@ -5,7 +5,9 @@ import io.github.brunostsilva.payoutops.domain.LedgerEntry;
 import io.github.brunostsilva.payoutops.domain.Money;
 import io.github.brunostsilva.payoutops.domain.PayoutBreakdown;
 import io.github.brunostsilva.payoutops.domain.PayoutComparison;
+import io.github.brunostsilva.payoutops.domain.PayoutHold;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 
@@ -77,6 +79,36 @@ public final class PayoutResponses {
     public record CommissionRuleResponse(BigDecimal rate, LocalDate validFrom, String reason) {
         public static CommissionRuleResponse from(CommissionRule rule) {
             return new CommissionRuleResponse(rule.rate(), rule.validFrom(), rule.reason());
+        }
+    }
+
+    public record PayoutHoldResponse(
+            String id,
+            String sellerId,
+            LocalDate periodStart,
+            LocalDate periodEnd,
+            String reason,
+            String status,
+            String proposedBy,
+            Instant proposedAt,
+            String decidedBy,
+            Instant decidedAt,
+            String decisionNote) {
+
+        public static PayoutHoldResponse from(PayoutHold hold) {
+            PayoutHold.Decision decision = hold.decision();
+            return new PayoutHoldResponse(
+                    hold.id().toString(),
+                    hold.sellerId().value(),
+                    hold.period().start(),
+                    hold.period().end(),
+                    hold.reason(),
+                    hold.status().name(),
+                    hold.proposedBy(),
+                    hold.proposedAt(),
+                    decision == null ? null : decision.decidedBy(),
+                    decision == null ? null : decision.decidedAt(),
+                    decision == null ? null : decision.note());
         }
     }
 

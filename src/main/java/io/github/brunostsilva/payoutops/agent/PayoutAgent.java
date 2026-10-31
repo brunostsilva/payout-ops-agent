@@ -38,6 +38,10 @@ public class PayoutAgent {
             - To explain a change, start with comparePayoutWithPreviousWeek and walk through its drivers, largest
               first. Use getLedgerEntries or getCommissionRules when the user asks which orders or rules caused it.
             - If a tool returns an error (e.g. unknown seller), tell the user plainly instead of guessing.
+            - You cannot hold, release or change payouts. Only when the user explicitly asks to hold or block a
+              payout, call proposePayoutHold with a short factual reason. It only records a PENDING proposal:
+              always tell the user that nothing has been held until an analyst approves it, and give the hold id.
+            - Never propose a hold the user did not ask for; at most, mention that one could be proposed.
             - Be concise and state amounts with their currency.
             """;
 
@@ -46,10 +50,13 @@ public class PayoutAgent {
     private final List<ToolCallback> tools;
     private final ToolCallingManager toolCallingManager = ToolCallingManager.builder().build();
 
-    public PayoutAgent(ChatModel chatModel, PayoutTools payoutTools, Clock clock) {
+    public PayoutAgent(ChatModel chatModel, PayoutTools payoutTools, PayoutActionTools actionTools, Clock clock) {
         this.chatModel = chatModel;
         this.clock = clock;
-        this.tools = List.of(MethodToolCallbackProvider.builder().toolObjects(payoutTools).build().getToolCallbacks());
+        this.tools = List.of(MethodToolCallbackProvider.builder()
+                .toolObjects(payoutTools, actionTools)
+                .build()
+                .getToolCallbacks());
     }
 
     public AgentAnswer ask(String question) {

@@ -7,9 +7,9 @@ changed, by how much, and why.
 
 > **Status:** this is being built incrementally, one pull request per milestone (see the
 > [roadmap](#roadmap)). The current version contains the payout domain, persistence, a
-> reproducible demo scenario, a REST API and the **LLM agent** (Spring AI tool calling, with a
-> deterministic offline model, OpenAI and Ollama). Human-in-the-loop actions and the MCP server
-> land in the next milestones.
+> reproducible demo scenario, a REST API, the **LLM agent** (Spring AI tool calling, with a
+> deterministic offline model, OpenAI and Ollama) and **human-in-the-loop payout holds**. The MCP
+> server and observability land in the next milestone.
 
 > **Note on the data:** all sellers, orders and amounts in `db/demo` are **synthetic**.
 
@@ -52,6 +52,12 @@ be tested exhaustively and reused by the REST API, the agent tools and the MCP s
   - `POST /api/agent/ask`;
   - a deterministic **scripted model** used by default (no API key needed), plus `openai` and
     `ollama` (local, free) profiles for real LLMs.
+- **Human-in-the-loop payout holds**:
+  - the agent's only write tool, `proposePayoutHold`, records a `PENDING` proposal and never
+    holds anything itself;
+  - analysts approve or reject proposals through `/api/holds`, and each hold can be decided
+    **exactly once**, even with concurrent reviewers;
+  - proposals are idempotent: at most one active (pending or approved) hold per seller and week.
 - **Tests**: fast unit tests for the domain, application and agent layers, plus end-to-end
   integration tests against a real Postgres via **Testcontainers**.
 - **CI** on GitHub Actions running the full suite on Java 25.
@@ -65,10 +71,16 @@ flowchart LR
     AgentAPI --> Agent[agent<br/>PayoutAgent]
     Agent <-->|prompt / tool calls| LLM{{ChatModel<br/>scripted · OpenAI · Ollama}}
     Agent -->|executes| Tools[agent<br/>PayoutTools<br/>read-only]
+    Agent -->|executes| Actions[agent<br/>PayoutActionTools<br/>propose only]
+    Client -->|review holds| HoldAPI[api<br/>HoldController]
     Tools --> App
+    Actions --> Holds[application<br/>PayoutHoldService]
+    HoldAPI --> Holds
+    Holds --> Domain
+    Holds --> Ports
     API --> App[application<br/>PayoutService]
-    App --> Domain[domain<br/>PayoutCalculator · PayoutComparison<br/>LedgerEntry · Money]
-    App --> Ports{{domain repositories<br/>SellerRepository · LedgerRepository<br/>CommissionRuleRepository}}
+    App --> Domain[domain<br/>PayoutCalculator · PayoutComparison<br/>LedgerEntry · Money · PayoutHold]
+    App --> Ports{{domain repositories<br/>SellerRepository · LedgerRepository<br/>CommissionRuleRepository<br/>PayoutHoldRepository}}
     Ports -.implemented by.-> Infra[infrastructure.persistence<br/>JdbcClient repositories]
     Infra --> DB[(Postgres<br/>Flyway)]
 ```
@@ -78,9 +90,9 @@ The layers follow a ports-and-adapters style:
 | Package | Responsibility | Depends on |
 |---|---|---|
 | `domain` | Business rules and repository interfaces. No Spring, no SQL. | — |
-| `application` | Use cases (`PayoutService`), orchestrating domain and repositories. | `domain` |
+| `application` | Use cases (`PayoutService`, `PayoutHoldService`), orchestrating domain and repositories. | `domain` |
 | `infrastructure.persistence` | `JdbcClient` implementations of the domain repositories. | `domain` |
-| `agent` | LLM orchestration: the tool-calling loop, the read-only tools and the scripted model. | `application`, `api` DTOs |
+| `agent` | LLM orchestration: the tool-calling loop, the read-only tools, the propose-only action tool and the scripted model. | `application`, `api` DTOs |
 | `api` | REST controllers and response DTOs (the API never exposes domain objects directly). | `application`, `agent` |
 
 ## The demo scenario
@@ -132,12 +144,13 @@ sequenceDiagram
 | `getWeeklyPayout(sellerId, weekOf)` | One week's breakdown |
 | `getLedgerEntries(sellerId, weekOf)` | Individual entries, including chargeback reasons and adjustment descriptions |
 | `getCommissionRules(sellerId)` | Commission rate history with the reason for each change |
+| `proposePayoutHold(sellerId, weekOf, reason)` | **The only write tool.** Records a `PENDING` hold proposal (or returns the existing one) and reminds the model that nothing was held. See [Human-in-the-loop holds](#human-in-the-loop-holds). |
 
 The model is chosen with a Spring profile:
 
 | Profile | Model | Needs |
 |---|---|---|
-| _(none)_ | `ScriptedChatModel`: deterministic, follows a fixed script (asks for the comparison tool, then templates the answer) | Nothing. Used by the tests and for demos without API keys. |
+| _(none)_ | `ScriptedChatModel`: deterministic, follows a fixed script (asks for the comparison tool, or for `proposePayoutHold` when the question says "hold", then templates the answer) | Nothing. Used by the tests and for demos without API keys. |
 | `openai` | OpenAI chat model (`gpt-4o-mini` by default) | `OPENAI_API_KEY` |
 | `ollama` | Local model through Ollama (`qwen2.5:7b` by default, pulled on first start) | Ollama running locally (`docker compose --profile ollama up -d`) |
 
@@ -165,6 +178,50 @@ curl -X POST localhost:8080/api/agent/ask -H "Content-Type: application/json" \
 With the `openai` or `ollama` profile, the same question gets a natural-language explanation,
 and follow-ups such as *"which orders were charged back?"* make the model call
 `getLedgerEntries` as well.
+
+## Human-in-the-loop holds
+
+Holding a seller's payout has real consequences, so the agent can only **propose** it. A human
+analyst makes the decision:
+
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING: agent calls proposePayoutHold
+    PENDING --> APPROVED: POST /api/holds/{id}/approve
+    PENDING --> REJECTED: POST /api/holds/{id}/reject (note required)
+    APPROVED --> [*]
+    REJECTED --> [*]
+```
+
+- **Propose only.** `proposePayoutHold` lives in its own `PayoutActionTools` class, apart from
+  the read-only tools. It returns the proposal plus an explicit note that nothing was held, and the
+  system prompt forbids proposing a hold the user didn't ask for.
+- **Idempotent proposals.** Asking again for the same seller and week returns the existing hold
+  while it is pending or approved (so an approved week is never proposed twice); only a rejected
+  hold allows a new proposal. A partial unique index (`WHERE status IN ('PENDING', 'APPROVED')`)
+  enforces this in the database, even for concurrent requests. The tool result says whether the
+  request `created` a proposal or reused an existing one (whose original reason is kept), so the
+  agent never reports a reused hold as a new proposal.
+- **Decide exactly once.** A decision is written with `UPDATE … WHERE status = 'PENDING'`. If
+  another analyst decided first, the second request gets `409 Conflict` instead of silently
+  overwriting the first decision.
+- **Audit trail.** Every hold records who proposed it and when, and who decided, when and why.
+  Rejections must include a note.
+
+```bash
+# The agent proposes (scripted model: any question with "hold", a seller id and a date)
+curl -X POST localhost:8080/api/agent/ask -H "Content-Type: application/json" \
+  -d '{"question": "Hold seller-123'\''s payout for the week of 2026-10-26, the chargebacks look like fraud"}'
+
+# An analyst reviews and decides
+curl localhost:8080/api/holds
+curl -X POST localhost:8080/api/holds/<id>/approve -H "Content-Type: application/json" \
+  -d '{"analyst": "ana", "note": "Confirmed with the risk team"}'
+```
+
+In this demo an approved hold is a recorded decision. In production, approval would trigger the
+payout gateway, and the analyst would come from the authenticated user rather than the request
+body.
 
 ## Running locally
 
@@ -232,10 +289,16 @@ Example response from the comparison endpoint (abridged):
 | `GET` | `/api/sellers/{sellerId}/payouts/comparison?weekOf=YYYY-MM-DD` | Compares that week with the previous one: net change, percentage and drivers sorted by impact. |
 | `GET` | `/api/sellers/{sellerId}/commission-rules` | Commission rate history, oldest first. |
 | `POST` | `/api/agent/ask` | Body `{"question": "..."}`. Returns `{answer, toolCalls}`, the answer plus the trace of every tool call. |
+| `GET` | `/api/holds?status=PENDING` | Holds with the given status (`PENDING` by default), oldest first. |
+| `GET` | `/api/holds/{id}` | One hold, including its decision if any. |
+| `POST` | `/api/holds/{id}/approve` | Body `{"analyst": "...", "note": "..."}` (note optional). |
+| `POST` | `/api/holds/{id}/reject` | Body `{"analyst": "...", "note": "..."}` (note required). |
 | `GET` | `/actuator/health` | Health check. |
 
-Unknown sellers return `404`, invalid input (blank seller id or question) returns `400`, and a
-model that keeps calling tools without answering returns `502`, all with a `ProblemDetail` body.
+Unknown sellers and holds return `404`, invalid input (blank seller id or question, missing
+analyst or rejection note) returns `400`, deciding a hold that was already decided returns `409`,
+and a model that keeps calling tools without answering returns `502`, all with a `ProblemDetail`
+body.
 Inside the agent, tool errors such as an unknown seller are not HTTP errors: they are passed back
 to the model so it can tell the user.
 
@@ -267,11 +330,14 @@ mvn verify
 - **Unit tests** (`domain`, `application`, `agent`): no Spring context, no Docker, run in
   milliseconds. The application layer is tested with in-memory repository implementations instead
   of mocks. `PayoutAgentTest` runs the real Spring AI tool-calling loop against in-memory data,
-  including tool errors and a model that never stops calling tools.
+  including tool errors, hold proposals and a model that never stops calling tools.
+  `PayoutHoldTest` and `PayoutHoldServiceTest` cover the hold lifecycle, idempotent proposals and
+  a decision lost to a concurrent one.
 - **Integration tests**: boot the full application against a real Postgres container.
-  `PayoutDemoScenarioIntegrationTest` and `AgentEndpointIntegrationTest` run with the `demo`
-  profile and exercise the service, the agent and the HTTP API end to end;
-  `DefaultProfileIntegrationTest` checks that no demo data is loaded without that profile.
+  `PayoutDemoScenarioIntegrationTest`, `AgentEndpointIntegrationTest` and
+  `HoldWorkflowIntegrationTest` run with the `demo` profile and exercise the service, the agent,
+  the hold workflow and the HTTP API end to end; `DefaultProfileIntegrationTest` checks that no
+  demo data is loaded without that profile.
 
 No test needs an API key or a running LLM: they all use the scripted model.
 
@@ -323,7 +389,7 @@ No test needs an API key or a running LLM: they all use the scripted model.
   `POST /api/agent/ask` returning the answer plus a trace of the tools it called; a deterministic
   scripted model (default and tests), OpenAI and Ollama (local, free) profiles
 - [x] **Platform upgrade**: Spring Boot 4.1 and Spring AI 2.0 (Jackson 3, Testcontainers 2)
-- [ ] **Human-in-the-loop actions**: the agent can propose a payout hold, which stays pending
+- [x] **Human-in-the-loop actions**: the agent can propose a payout hold, which stays pending
   until an analyst approves or rejects it via the API
 - [ ] **MCP server and observability**: expose the same tools over the Model Context Protocol
   (usable from Claude Desktop and other MCP clients); Micrometer/OpenTelemetry traces for every

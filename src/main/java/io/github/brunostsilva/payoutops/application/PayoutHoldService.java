@@ -1,0 +1,89 @@
+package io.github.brunostsilva.payoutops.application;
+
+import io.github.brunostsilva.payoutops.domain.HoldAlreadyDecidedException;
+import io.github.brunostsilva.payoutops.domain.HoldStatus;
+import io.github.brunostsilva.payoutops.domain.PayoutHold;
+import io.github.brunostsilva.payoutops.domain.PayoutHoldRepository;
+import io.github.brunostsilva.payoutops.domain.PayoutPeriod;
+import io.github.brunostsilva.payoutops.domain.SellerId;
+import io.github.brunostsilva.payoutops.domain.SellerRepository;
+import java.time.Clock;
+import java.util.List;
+import java.util.UUID;
+import java.util.function.UnaryOperator;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.stereotype.Service;
+
+/**
+ * Proposing a hold never touches the payout; only an analyst's approval does. Proposals are
+ * idempotent per seller and period, and each hold can be decided exactly once, even concurrently.
+ */
+@Service
+public class PayoutHoldService {
+
+    static final int MAX_PROPOSAL_ATTEMPTS = 3;
+
+    private final SellerRepository sellers;
+    private final PayoutHoldRepository holds;
+    private final Clock clock;
+
+    public PayoutHoldService(SellerRepository sellers, PayoutHoldRepository holds, Clock clock) {
+        this.sellers = sellers;
+        this.holds = holds;
+        this.clock = clock;
+    }
+
+    /**
+     * Returns the seller's active (pending or approved) hold for the period if there is one, otherwise
+     * creates a pending proposal. A rejected hold doesn't block a new proposal. The result says which
+     * of the two happened, so callers never report a reused hold as a new proposal.
+     */
+    public HoldProposal propose(SellerId sellerId, PayoutPeriod period, String reason, String proposedBy) {
+        if (sellers.findById(sellerId).isEmpty()) {
+            throw new SellerNotFoundException(sellerId);
+        }
+        for (int attempt = 1; ; attempt++) {
+            var existing = holds.findActive(sellerId, period);
+            if (existing.isPresent()) {
+                return new HoldProposal(existing.get(), false);
+            }
+            PayoutHold hold = PayoutHold.propose(sellerId, period, reason, proposedBy, clock.instant());
+            try {
+                holds.insert(hold);
+                return new HoldProposal(hold, true);
+            } catch (DuplicateKeyException concurrentProposal) {
+                // A concurrent proposal won the unique index. Look again: usually it is still active and we
+                // return it; if it was rejected in the meantime, the period is free and we try once more.
+                if (attempt == MAX_PROPOSAL_ATTEMPTS) {
+                    throw concurrentProposal;
+                }
+            }
+        }
+    }
+
+    public PayoutHold approve(UUID holdId, String analyst, String note) {
+        return decide(holdId, hold -> hold.approve(analyst, note, clock.instant()));
+    }
+
+    public PayoutHold reject(UUID holdId, String analyst, String note) {
+        return decide(holdId, hold -> hold.reject(analyst, note, clock.instant()));
+    }
+
+    public PayoutHold get(UUID holdId) {
+        return holds.findById(holdId).orElseThrow(() -> new HoldNotFoundException(holdId));
+    }
+
+    public List<PayoutHold> list(HoldStatus status) {
+        return holds.findByStatus(status);
+    }
+
+    private PayoutHold decide(UUID holdId, UnaryOperator<PayoutHold> decision) {
+        PayoutHold current = get(holdId);
+        PayoutHold decided = decision.apply(current);
+        if (!holds.recordDecision(decided)) {
+            HoldStatus winner = holds.findById(holdId).map(PayoutHold::status).orElse(current.status());
+            throw new HoldAlreadyDecidedException(holdId, winner);
+        }
+        return decided;
+    }
+}
