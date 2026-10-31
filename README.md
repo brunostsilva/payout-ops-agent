@@ -1,7 +1,7 @@
 # payout-ops-agent
 
-An AI-assisted payout operations service for marketplaces, built with **Java 25** and
-**Spring Boot**. Operations analysts ask questions like *"why did seller 123's payout drop
+An AI-assisted payout operations service for marketplaces, built with **Java 25**,
+**Spring Boot 4** and **Spring AI 2**. Operations analysts ask questions like *"why did seller 123's payout drop
 this week?"* and get an answer grounded in the seller's actual ledger: which components
 changed, by how much, and why.
 
@@ -291,11 +291,12 @@ No test needs an API key or a running LLM: they all use the scripted model.
 - **Repeatable migration for demo data.** Schema changes stay in versioned migrations; the demo
   seed lives in its own location, behind the `demo` profile, and replaces the demo sellers' data
   wholesale every time it changes, so the database can never drift from the file.
-- **Application-driven tool execution.** Spring AI can run tools inside the model client, but here
-  `PayoutAgent` disables that (`internalToolExecutionEnabled(false)`) and runs the loop itself
-  with `ToolCallingManager`. That makes the tool trace a first-class part of the response and lets
-  the agent cap the number of tool rounds, so a misbehaving model fails fast with a `502` instead
-  of looping and burning tokens.
+- **Application-driven tool execution.** In Spring AI 2 a `ChatModel` only returns the tool calls
+  the model asks for; `PayoutAgent` executes them with `ToolCallingManager` and owns the loop. That
+  makes the tool trace a first-class part of the response and lets the agent cap the number of
+  tool rounds, so a misbehaving model fails fast with a `502` instead of looping and burning
+  tokens. Calls and results are paired by position, because some providers (e.g. Ollama) may send
+  empty tool call ids.
 - **The model only reads through tools.** Tools are thin, read-only adapters over
   `PayoutService` and return the same DTOs as the REST API. The system prompt tells the model to
   take every number from the tools; the drivers already add up to the net change, so the model
@@ -304,18 +305,29 @@ No test needs an API key or a running LLM: they all use the scripted model.
   and goes through the real tool-calling loop, so the tests (and anyone trying the project
   without an API key) exercise the same code path as OpenAI or Ollama.
 
+## Tech stack
+
+| | |
+|---|---|
+| Language | Java 25 (records, sealed interfaces, pattern matching) |
+| Framework | Spring Boot 4.1 (Spring Framework 7, Jackson 3) |
+| AI | Spring AI 2.0: tool calling, OpenAI and Ollama starters |
+| Persistence | PostgreSQL 17, Flyway, `JdbcClient` |
+| Testing | JUnit 5, AssertJ, MockMvc, Testcontainers 2 |
+| Build & CI | Maven, GitHub Actions, Dependabot |
+
 ## Roadmap
 
 - [x] **Domain, persistence and API**: payout model, Postgres + Flyway, demo scenario, REST API, tests, CI
 - [x] **LLM agent**: Spring AI tool calling with read-only `@Tool`s over the payout service;
   `POST /api/agent/ask` returning the answer plus a trace of the tools it called; a deterministic
   scripted model (default and tests), OpenAI and Ollama (local, free) profiles
+- [x] **Platform upgrade**: Spring Boot 4.1 and Spring AI 2.0 (Jackson 3, Testcontainers 2)
 - [ ] **Human-in-the-loop actions**: the agent can propose a payout hold, which stays pending
   until an analyst approves or rejects it via the API
 - [ ] **MCP server and observability**: expose the same tools over the Model Context Protocol
   (usable from Claude Desktop and other MCP clients); Micrometer/OpenTelemetry traces for every
   model and tool call, viewable in Jaeger via Docker Compose
-- [ ] **Platform upgrade**: Spring Boot 4 and Spring AI 2
 
 ## License
 
