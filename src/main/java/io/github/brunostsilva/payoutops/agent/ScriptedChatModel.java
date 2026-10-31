@@ -20,25 +20,29 @@ import org.springframework.stereotype.Component;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * Deterministic stand-in for an LLM, active when no real model is configured
  * ({@code spring.ai.model.chat=none}, the default).
  *
  * <p>It follows a fixed script that still goes through the real tool-calling loop: for a question
- * mentioning a seller id and a date it requests {@code comparePayoutWithPreviousWeek}, then turns
- * the tool result into a templated answer. This keeps the agent runnable and testable offline,
- * without API keys or network access.
+ * mentioning a seller id and a date it requests {@code comparePayoutWithPreviousWeek} (or
+ * {@code proposePayoutHold} when the question asks to "hold" the payout), then turns the tool result
+ * into a templated answer. This keeps the agent runnable and testable offline, without API keys or
+ * network access.
  */
 @Component
 @ConditionalOnProperty(name = "spring.ai.model.chat", havingValue = "none")
 public class ScriptedChatModel implements ChatModel {
 
     static final String COMPARISON_TOOL = "comparePayoutWithPreviousWeek";
+    static final String PROPOSE_HOLD_TOOL = "proposePayoutHold";
     static final String PREFIX = "[scripted model] ";
 
     private static final Pattern SELLER_ID = Pattern.compile("seller-[A-Za-z0-9]+");
     private static final Pattern DATE = Pattern.compile("\\d{4}-\\d{2}-\\d{2}");
+    private static final Pattern HOLD_REQUEST = Pattern.compile("\\bhold\\b", Pattern.CASE_INSENSITIVE);
 
     private final JsonMapper jsonMapper;
 
@@ -62,18 +66,45 @@ public class ScriptedChatModel implements ChatModel {
             return text("Please mention a seller id (e.g. seller-123) and a date inside the week to analyse "
                     + "(YYYY-MM-DD). Enable the openai or ollama profile for free-form questions.");
         }
-        String arguments = jsonMapper.createObjectNode()
+        ObjectNode arguments = jsonMapper.createObjectNode()
                 .put("sellerId", seller.group())
-                .put("weekOf", date.group())
-                .toString();
+                .put("weekOf", date.group());
+        String tool = COMPARISON_TOOL;
+        if (HOLD_REQUEST.matcher(question).find()) {
+            tool = PROPOSE_HOLD_TOOL;
+            arguments.put("reason", "Requested by an analyst through the agent: " + question.strip());
+        }
         return AssistantMessage.builder()
                 .content("")
-                .toolCalls(List.of(new AssistantMessage.ToolCall("call-1", "function", COMPARISON_TOOL, arguments)))
+                .toolCalls(List.of(new AssistantMessage.ToolCall("call-1", "function", tool, arguments.toString())))
                 .build();
     }
 
     private AssistantMessage summarize(ToolResponseMessage toolResponses) {
-        String data = toolResponses.getResponses().getFirst().responseData();
+        ToolResponseMessage.ToolResponse response = toolResponses.getResponses().getFirst();
+        return PROPOSE_HOLD_TOOL.equals(response.name())
+                ? summarizeHold(response.responseData())
+                : summarizeComparison(response.responseData());
+    }
+
+    private AssistantMessage summarizeHold(String data) {
+        JsonNode result = parse(data);
+        if (result == null || !result.has("hold")) {
+            return text("I couldn't propose the hold: " + data);
+        }
+        JsonNode hold = result.path("hold");
+        String id = hold.path("id").asString();
+        return text(("Proposed a payout hold for %s for the week starting %s (hold %s). Status: %s. Nothing has been "
+                        + "held yet: an analyst must approve or reject it via POST /api/holds/%s/approve or /reject.")
+                .formatted(
+                        hold.path("sellerId").asString(),
+                        hold.path("periodStart").asString(),
+                        id,
+                        hold.path("status").asString(),
+                        id));
+    }
+
+    private AssistantMessage summarizeComparison(String data) {
         JsonNode comparison = parse(data);
         if (comparison == null || !comparison.has("netChange")) {
             return text("I couldn't get the payout data: " + data);
