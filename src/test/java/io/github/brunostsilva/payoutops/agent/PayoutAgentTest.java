@@ -8,10 +8,14 @@ import static io.github.brunostsilva.payoutops.domain.LedgerFixtures.sale;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.github.brunostsilva.payoutops.application.InMemoryPayoutHoldRepository;
+import io.github.brunostsilva.payoutops.application.PayoutHoldService;
 import io.github.brunostsilva.payoutops.application.PayoutService;
+import io.github.brunostsilva.payoutops.domain.HoldStatus;
 import io.github.brunostsilva.payoutops.domain.LedgerEntry;
 import io.github.brunostsilva.payoutops.domain.PayoutPeriod;
 import io.github.brunostsilva.payoutops.domain.Seller;
+import io.github.brunostsilva.payoutops.domain.SellerRepository;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -42,16 +46,23 @@ class PayoutAgentTest {
             commission("80.00", CURRENT.start()),
             chargeback("100.00", CURRENT.start()));
 
+    private final SellerRepository sellers =
+            id -> id.equals(SELLER) ? Optional.of(new Seller(SELLER, "Test Seller", BRL)) : Optional.empty();
+
     private final PayoutService payoutService = new PayoutService(
-            id -> id.equals(SELLER) ? Optional.of(new Seller(SELLER, "Test Seller", BRL)) : Optional.empty(),
+            sellers,
             (sellerId, period) -> ledger.stream()
                     .filter(entry -> entry.sellerId().equals(sellerId) && period.contains(entry.occurredOn()))
                     .toList(),
             sellerId -> List.of());
 
-    private final PayoutTools tools = new PayoutTools(payoutService);
     private final Clock clock = Clock.fixed(Instant.parse("2026-10-31T12:00:00Z"), ZoneOffset.UTC);
-    private final PayoutAgent agent = new PayoutAgent(new ScriptedChatModel(new JsonMapper()), tools, clock);
+    private final InMemoryPayoutHoldRepository holds = new InMemoryPayoutHoldRepository();
+    private final PayoutTools tools = new PayoutTools(payoutService);
+    private final PayoutActionTools actionTools =
+            new PayoutActionTools(new PayoutHoldService(sellers, holds, clock));
+    private final PayoutAgent agent =
+            new PayoutAgent(new ScriptedChatModel(new JsonMapper()), tools, actionTools, clock);
 
     @Test
     void answersThroughTheComparisonToolAndTracesTheCall() {
@@ -107,7 +118,7 @@ class PayoutAgentTest {
             }
         };
 
-        AgentAnswer answer = new PayoutAgent(parallelCallsWithoutIds, tools, clock).ask("anything");
+        AgentAnswer answer = new PayoutAgent(parallelCallsWithoutIds, tools, actionTools, clock).ask("anything");
 
         assertThat(answer.toolCalls()).extracting(ToolInvocation::tool)
                 .containsExactly("getWeeklyPayout", "getCommissionRules");
@@ -133,7 +144,7 @@ class PayoutAgentTest {
             }
         };
 
-        new PayoutAgent(providerLike, tools, clock).ask("anything");
+        new PayoutAgent(providerLike, tools, actionTools, clock).ask("anything");
 
         assertThat(sentOptions).singleElement().isInstanceOfSatisfying(OpenAiChatOptions.class, options -> {
             assertThat(options.getModel()).isEqualTo("gpt-test");
@@ -141,6 +152,24 @@ class PayoutAgentTest {
             assertThat(options.getToolCallbacks())
                     .extracting(callback -> callback.getToolDefinition().name())
                     .contains("comparePayoutWithPreviousWeek", "getLedgerEntries");
+        });
+    }
+
+    @Test
+    void proposesAPendingHoldOnlyWhenAskedAndSaysNothingWasHeld() {
+        AgentAnswer answer =
+                agent.ask("Please hold seller-1's payout for the week of 2026-10-26, the chargeback looks like fraud");
+
+        assertThat(answer.toolCalls()).singleElement()
+                .satisfies(call -> assertThat(call.tool()).isEqualTo("proposePayoutHold"));
+        assertThat(holds.findByStatus(HoldStatus.PENDING)).singleElement().satisfies(hold -> {
+            assertThat(hold.sellerId()).isEqualTo(SELLER);
+            assertThat(hold.period()).isEqualTo(CURRENT);
+            assertThat(hold.proposedBy()).isEqualTo("payout-ops-agent");
+            assertThat(answer.answer())
+                    .contains(hold.id().toString())
+                    .contains("Status: PENDING")
+                    .contains("Nothing has been held");
         });
     }
 
@@ -158,7 +187,7 @@ class PayoutAgentTest {
             }
         };
 
-        assertThatThrownBy(() -> new PayoutAgent(alwaysCallsTools, tools, clock).ask("anything"))
+        assertThatThrownBy(() -> new PayoutAgent(alwaysCallsTools, tools, actionTools, clock).ask("anything"))
                 .isInstanceOf(AgentLoopLimitExceededException.class)
                 .hasMessageContaining(String.valueOf(PayoutAgent.MAX_TOOL_ROUNDS));
     }

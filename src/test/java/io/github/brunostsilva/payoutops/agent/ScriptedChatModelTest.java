@@ -27,6 +27,38 @@ class ScriptedChatModelTest {
     }
 
     @Test
+    void requestsAHoldProposalWhenAskedToHold() {
+        ChatResponse response = model.call(new Prompt(
+                new UserMessage("Hold seller-123's payout for 2026-10-26")));
+
+        AssistantMessage.ToolCall call = response.getResult().getOutput().getToolCalls().getFirst();
+        assertThat(call.name()).isEqualTo(ScriptedChatModel.PROPOSE_HOLD_TOOL);
+        assertThat(call.arguments())
+                .contains("\"sellerId\":\"seller-123\"")
+                .contains("\"weekOf\":\"2026-10-26\"")
+                .contains("\"reason\":\"Requested by an analyst through the agent: Hold seller-123's payout");
+    }
+
+    @Test
+    void summarizesAHoldProposal() {
+        String proposal = """
+                {"hold": {"id": "7f1c", "sellerId": "seller-123", "periodStart": "2026-10-26", "status": "PENDING"},
+                 "note": "Proposal recorded as PENDING."}
+                """;
+        ToolResponseMessage toolResponse = ToolResponseMessage.builder()
+                .responses(List.of(new ToolResponseMessage.ToolResponse(
+                        "call-1", ScriptedChatModel.PROPOSE_HOLD_TOOL, proposal)))
+                .build();
+
+        ChatResponse response = model.call(new Prompt(List.of(new UserMessage("question"), toolResponse)));
+
+        assertThat(response.getResult().getOutput().getText()).isEqualTo(
+                "[scripted model] Proposed a payout hold for seller-123 for the week starting 2026-10-26 (hold 7f1c). "
+                        + "Status: PENDING. Nothing has been held yet: an analyst must approve or reject it via "
+                        + "POST /api/holds/7f1c/approve or /reject.");
+    }
+
+    @Test
     void asksForSellerAndDateWhenTheyAreMissing() {
         ChatResponse response = model.call(new Prompt(new UserMessage("Why did my payout drop?")));
 
