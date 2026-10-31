@@ -130,6 +130,17 @@ class PayoutDemoScenarioIntegrationTest {
     }
 
     @Test
+    void blankSellerIdReturnsBadRequestOnEveryEndpoint() throws Exception {
+        mockMvc.perform(get("/api/sellers/{sellerId}/payouts", " ").param("weekOf", "2026-10-26"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value("SellerId must not be blank"));
+        mockMvc.perform(get("/api/sellers/{sellerId}/payouts/comparison", " ").param("weekOf", "2026-10-26"))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(get("/api/sellers/{sellerId}/commission-rules", " "))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     void unknownSellerReturnsProblemDetail() throws Exception {
         mockMvc.perform(get("/api/sellers/ghost/payouts").param("weekOf", "2026-10-26"))
                 .andExpect(status().isNotFound())
