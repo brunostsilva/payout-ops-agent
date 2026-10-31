@@ -69,7 +69,11 @@ class McpServerIntegrationTest {
                 Map.of("sellerId", "seller-456", "weekOf", "2026-11-02", "reason", "Requested from an MCP client")));
 
         assertThat(result.isError()).isNotEqualTo(Boolean.TRUE);
-        assertThat(text(result)).contains("\"status\":\"PENDING\"").contains("Nothing has been held");
+        assertThat(text(result))
+                .contains("\"status\":\"PENDING\"")
+                .contains("Nothing has been held")
+                .as("MCP proposals are told apart from the in-app agent's")
+                .contains("\"proposedBy\":\"mcp-client\"");
     }
 
     @Test
@@ -77,6 +81,7 @@ class McpServerIntegrationTest {
         McpSchema.CallToolResult result = client.callTool(new McpSchema.CallToolRequest(
                 "getWeeklyPayout", Map.of("sellerId", "seller-999", "weekOf", "2026-10-26")));
 
+        assertThat(result.isError()).isTrue();
         assertThat(text(result)).contains("seller-999");
     }
 

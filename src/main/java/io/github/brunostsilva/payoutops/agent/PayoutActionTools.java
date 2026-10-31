@@ -10,6 +10,7 @@ import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 /**
@@ -20,7 +21,10 @@ import org.springframework.stereotype.Component;
 @Component
 public class PayoutActionTools {
 
-    static final String PROPOSED_BY = "payout-ops-agent";
+    /** Proposer recorded for holds requested through the in-app agent ({@code POST /api/agent/ask}). */
+    static final String AGENT_PROPOSER = "payout-ops-agent";
+    /** Proposer recorded for holds requested by external clients through the MCP server. */
+    static final String MCP_CLIENT_PROPOSER = "mcp-client";
     static final String PENDING_NOTE =
             "Proposal recorded as PENDING. Nothing has been held: an analyst must approve or reject it.";
     static final String APPROVED_NOTE =
@@ -32,9 +36,18 @@ public class PayoutActionTools {
                     + "approve or reject the existing proposal.";
 
     private final PayoutHoldService holdService;
+    private final String proposedBy;
 
+    /** The Spring bean used by {@link PayoutAgent}: proposals are recorded as coming from the agent. */
+    @Autowired
     public PayoutActionTools(PayoutHoldService holdService) {
+        this(holdService, AGENT_PROPOSER);
+    }
+
+    /** For other channels (e.g. the MCP server), so analysts can tell who asked for each hold. */
+    public PayoutActionTools(PayoutHoldService holdService, String proposedBy) {
         this.holdService = holdService;
+        this.proposedBy = proposedBy;
     }
 
     @Tool(description = """
@@ -54,7 +67,7 @@ public class PayoutActionTools {
         } catch (DateTimeParseException invalid) {
             throw new IllegalArgumentException("weekOf must be a date formatted YYYY-MM-DD, got: " + weekOf);
         }
-        HoldProposal proposal = holdService.propose(new SellerId(sellerId), period, reason, PROPOSED_BY);
+        HoldProposal proposal = holdService.propose(new SellerId(sellerId), period, reason, proposedBy);
         PayoutHold hold = proposal.hold();
         String note;
         if (!hold.isPending()) {

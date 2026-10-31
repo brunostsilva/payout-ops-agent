@@ -236,7 +236,9 @@ The agent's tools are also published over the [Model Context Protocol](https://m
 at `http://localhost:8080/mcp` (Streamable HTTP), by Spring AI's MCP server starter. External MCP
 clients therefore get **exactly the same** five tools, backed by the same services and guarantees.
 This includes `proposePayoutHold`, which can only create a `PENDING` proposal that a human must
-approve (see `McpToolsConfiguration`).
+approve (see `McpToolsConfiguration`). Holds proposed over MCP are recorded with
+`proposedBy: "mcp-client"`, so analysts can tell them apart from the in-app agent's
+(`payout-ops-agent`).
 
 **MCP Inspector** (free, needs Node.js):
 
