@@ -67,7 +67,7 @@ public class PayoutAgent {
                 throw new AgentLoopLimitExceededException(MAX_TOOL_ROUNDS);
             }
             ToolExecutionResult execution = toolCallingManager.executeToolCalls(prompt, response);
-            trace.addAll(ToolInvocation.from(response, execution));
+            trace.addAll(ToolInvocation.from(execution));
             prompt = new Prompt(execution.conversationHistory(), options);
             response = chatModel.call(prompt);
         }

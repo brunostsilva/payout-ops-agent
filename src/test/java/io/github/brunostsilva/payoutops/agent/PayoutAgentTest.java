@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
@@ -79,6 +80,36 @@ class PayoutAgentTest {
 
         assertThat(answer.toolCalls()).isEmpty();
         assertThat(answer.answer()).contains("seller id");
+    }
+
+    @Test
+    void tracesParallelToolCallsWithEmptyIdsInOrder() {
+        // Some providers (e.g. Ollama) may send tool calls without ids: results must still match their calls.
+        ChatModel parallelCallsWithoutIds = new ChatModel() {
+            @Override
+            public ChatResponse call(Prompt prompt) {
+                if (prompt.getInstructions().getLast() instanceof ToolResponseMessage) {
+                    return new ChatResponse(List.of(new Generation(new AssistantMessage("done"))));
+                }
+                AssistantMessage toolCalls = AssistantMessage.builder()
+                        .content("")
+                        .toolCalls(List.of(
+                                new AssistantMessage.ToolCall(
+                                        "", "function", "getWeeklyPayout",
+                                        "{\"sellerId\":\"seller-1\",\"weekOf\":\"2026-10-26\"}"),
+                                new AssistantMessage.ToolCall(
+                                        "", "function", "getCommissionRules", "{\"sellerId\":\"seller-1\"}")))
+                        .build();
+                return new ChatResponse(List.of(new Generation(toolCalls)));
+            }
+        };
+
+        AgentAnswer answer = new PayoutAgent(parallelCallsWithoutIds, tools, clock).ask("anything");
+
+        assertThat(answer.toolCalls()).extracting(ToolInvocation::tool)
+                .containsExactly("getWeeklyPayout", "getCommissionRules");
+        assertThat(answer.toolCalls().get(0).result()).contains("\"grossSales\"");
+        assertThat(answer.toolCalls().get(1).result()).isEqualTo("[]");
     }
 
     @Test
