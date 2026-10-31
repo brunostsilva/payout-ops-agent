@@ -2,6 +2,7 @@ package io.github.brunostsilva.payoutops.application;
 
 import io.github.brunostsilva.payoutops.domain.CommissionRule;
 import io.github.brunostsilva.payoutops.domain.CommissionRuleRepository;
+import io.github.brunostsilva.payoutops.domain.LedgerEntry;
 import io.github.brunostsilva.payoutops.domain.LedgerRepository;
 import io.github.brunostsilva.payoutops.domain.PayoutBreakdown;
 import io.github.brunostsilva.payoutops.domain.PayoutCalculator;
@@ -34,6 +35,11 @@ public class PayoutService {
     public PayoutComparison compareWithPreviousPeriod(SellerId sellerId, PayoutPeriod current) {
         Seller seller = requireSeller(sellerId);
         return new PayoutComparison(payoutFor(seller, current.previous()), payoutFor(seller, current));
+    }
+
+    public List<LedgerEntry> ledgerEntries(SellerId sellerId, PayoutPeriod period) {
+        requireSeller(sellerId);
+        return ledger.findBySellerAndPeriod(sellerId, period);
     }
 
     public List<CommissionRule> commissionRules(SellerId sellerId) {
