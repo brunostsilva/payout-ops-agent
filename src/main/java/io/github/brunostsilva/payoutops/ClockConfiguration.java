@@ -7,8 +7,9 @@ import org.springframework.context.annotation.Configuration;
 @Configuration(proxyBeanMethods = false)
 class ClockConfiguration {
 
+    /** The server's zone: the agent derives "today" (and so "this week") from it. */
     @Bean
     Clock clock() {
-        return Clock.systemUTC();
+        return Clock.systemDefaultZone();
     }
 }
