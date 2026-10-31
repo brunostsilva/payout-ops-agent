@@ -40,6 +40,15 @@ class ScriptedChatModelTest {
     }
 
     @Test
+    void doesNotProposeAHoldWhenOnlyAskingAboutHoldStatus() {
+        ChatResponse response = model.call(new Prompt(
+                new UserMessage("Is seller-123's payout on hold for 2026-10-26?")));
+
+        AssistantMessage.ToolCall call = response.getResult().getOutput().getToolCalls().getFirst();
+        assertThat(call.name()).isEqualTo(ScriptedChatModel.COMPARISON_TOOL);
+    }
+
+    @Test
     void summarizesAHoldProposal() {
         String proposal = """
                 {"hold": {"id": "7f1c", "sellerId": "seller-123", "periodStart": "2026-10-26", "status": "PENDING"},

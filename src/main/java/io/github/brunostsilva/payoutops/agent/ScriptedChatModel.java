@@ -42,7 +42,10 @@ public class ScriptedChatModel implements ChatModel {
 
     private static final Pattern SELLER_ID = Pattern.compile("seller-[A-Za-z0-9]+");
     private static final Pattern DATE = Pattern.compile("\\d{4}-\\d{2}-\\d{2}");
-    private static final Pattern HOLD_REQUEST = Pattern.compile("\\bhold\\b", Pattern.CASE_INSENSITIVE);
+    // An explicit request to hold/block a payout ("hold seller-123's payout ..."), not a question about
+    // status such as "is the payout on hold?", where "payout" comes before "hold".
+    private static final Pattern HOLD_REQUEST =
+            Pattern.compile("\\b(?:hold|block)\\b[^.?!]*\\bpayout\\b", Pattern.CASE_INSENSITIVE);
 
     private final JsonMapper jsonMapper;
 
