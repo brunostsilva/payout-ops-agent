@@ -19,11 +19,13 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
 /** End-to-end check of the seeded demo scenario: Flyway schema + seed, JDBC repositories, service and API. */
 @SpringBootTest
 @AutoConfigureMockMvc
+@ActiveProfiles("demo")
 @Import(TestcontainersConfiguration.class)
 class PayoutDemoScenarioIntegrationTest {
 

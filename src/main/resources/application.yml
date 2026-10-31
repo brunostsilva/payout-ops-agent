@@ -6,9 +6,7 @@ spring:
     username: ${DATABASE_USERNAME:payoutops}
     password: ${DATABASE_PASSWORD:payoutops}
   flyway:
-    # db/demo holds a repeatable migration with the synthetic demo scenario.
-    # Drop it from this list for any non-demo deployment.
-    locations: classpath:db/migration,classpath:db/demo
+    locations: classpath:db/migration
   mvc:
     problemdetails:
       enabled: true

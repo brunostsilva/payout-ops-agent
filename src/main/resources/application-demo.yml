@@ -1,0 +1,5 @@
+# Opt-in profile that loads the synthetic demo scenario (sellers, commission rules, ledger).
+# Never enable it against a database holding real data.
+spring:
+  flyway:
+    locations: classpath:db/migration,classpath:db/demo

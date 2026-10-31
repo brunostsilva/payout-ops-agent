@@ -92,17 +92,18 @@ numbers, so the seed and the documentation cannot drift apart silently.
 
 Requirements: **Java 25**, **Maven 3.9+**, and **Docker** (for Postgres and the integration tests).
 
-**Option A: throwaway database via Testcontainers** (nothing else to start):
+**Option A: throwaway database via Testcontainers** (nothing else to start; the `demo` profile
+is enabled automatically):
 
 ```bash
 mvn spring-boot:test-run
 ```
 
-**Option B: Docker Compose Postgres:**
+**Option B: Docker Compose Postgres** (enable the `demo` profile to load the sample data):
 
 ```bash
 docker compose up -d
-mvn spring-boot:run
+mvn spring-boot:run -Dspring-boot.run.profiles=demo
 ```
 
 Then try the API:
@@ -153,8 +154,9 @@ Unknown sellers return `404` with a `ProblemDetail` body.
 | `DATABASE_USERNAME` | `payoutops` | Database user |
 | `DATABASE_PASSWORD` | `payoutops` | Database password |
 
-The demo seed is loaded from `classpath:db/demo` (see `spring.flyway.locations` in
-`application.yml`); remove that location for any non-demo deployment.
+The demo seed is **opt-in**: it is only loaded when the `demo` Spring profile is active (see
+`application-demo.yml`). Without it, Flyway only applies the schema, so pointing the service at a
+real database never inserts synthetic sellers or ledger entries.
 
 ## Testing
 
@@ -164,9 +166,10 @@ mvn verify
 
 - **Unit tests** (`domain`, `application`): no Spring context, no Docker, run in milliseconds.
   The application layer is tested with in-memory repository implementations instead of mocks.
-- **Integration tests** (`PayoutDemoScenarioIntegrationTest`): boot the full application against
-  a real Postgres container, run the Flyway migrations and the demo seed, and exercise the
-  service and the HTTP API end to end.
+- **Integration tests**: boot the full application against a real Postgres container.
+  `PayoutDemoScenarioIntegrationTest` runs with the `demo` profile and exercises the service and
+  the HTTP API end to end; `DefaultProfileIntegrationTest` checks that no demo data is loaded
+  without that profile.
 
 ## Design decisions
 
