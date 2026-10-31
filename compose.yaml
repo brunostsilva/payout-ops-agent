@@ -12,3 +12,15 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  # Local LLM for the "ollama" Spring profile. Only started with: docker compose --profile ollama up -d
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["ollama"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+
+volumes:
+  ollama-models:
