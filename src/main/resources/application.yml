@@ -37,3 +37,8 @@ management:
     web:
       exposure:
         include: health,info
+  tracing:
+    sampling:
+      # Trace every agent request: traffic is low and each trace is an audit of what the model did.
+      # Spans are only exported when the "tracing" profile sets an OTLP endpoint.
+      probability: 1.0
