@@ -322,7 +322,7 @@ they happen, and the HTTP error handler only adds a `DEBUG` line for the respons
 backends and shippers read as is:
 
 ```bash
-mvn spring-boot:test-run -Dspring-boot.run.profiles=demo,json-logs
+./mvnw spring-boot:test-run -Dspring-boot.run.profiles=demo,json-logs
 ```
 
 Each line has the usual ECS fields (`@timestamp`, `log.level`, `log.logger`, `message`,
@@ -377,7 +377,7 @@ Compose profile:
 
 ```bash
 docker compose --profile observability up -d
-mvn spring-boot:test-run -Dspring-boot.run.profiles=demo,tracing
+./mvnw spring-boot:test-run -Dspring-boot.run.profiles=demo,tracing
 ```
 
 | Tool | URL | What to look at |
@@ -396,31 +396,33 @@ to `127.0.0.1`: they are reachable from your machine only, not from the rest of 
 
 ## Running locally
 
-Requirements: **Java 25**, **Maven 3.9+**, and **Docker** (for Postgres and the integration tests).
+Requirements: **Java 25** and **Docker** (for Postgres and the integration tests). Maven doesn't
+need to be installed: the **Maven Wrapper** (`./mvnw`, or `mvnw.cmd` on Windows) downloads the
+version pinned in `.mvn/wrapper/maven-wrapper.properties` (Maven 3.10.0) on its first run.
 
 **Option A: throwaway database via Testcontainers** (nothing else to start; the `demo` profile
 is enabled automatically):
 
 ```bash
-mvn spring-boot:test-run
+./mvnw spring-boot:test-run
 ```
 
 **Option B: Docker Compose Postgres** (enable the `demo` profile to load the sample data):
 
 ```bash
 docker compose up -d
-mvn spring-boot:run -Dspring-boot.run.profiles=demo
+./mvnw spring-boot:run -Dspring-boot.run.profiles=demo
 ```
 
 **Using a real LLM** (profiles can be combined):
 
 ```bash
 # OpenAI
-OPENAI_API_KEY=sk-... mvn spring-boot:test-run -Dspring-boot.run.profiles=demo,openai
+OPENAI_API_KEY=sk-... ./mvnw spring-boot:test-run -Dspring-boot.run.profiles=demo,openai
 
 # Ollama, fully local and free (the first start downloads the model, a few GB)
 docker compose --profile ollama up -d
-mvn spring-boot:test-run -Dspring-boot.run.profiles=demo,ollama
+./mvnw spring-boot:test-run -Dspring-boot.run.profiles=demo,ollama
 ```
 
 Then try the API:
@@ -498,7 +500,7 @@ real database never inserts synthetic sellers or ledger entries.
 ## Testing
 
 ```bash
-mvn verify
+./mvnw verify
 ```
 
 - **Unit tests** (`domain`, `application`, `agent`): no Spring context, no Docker, run in
@@ -565,7 +567,7 @@ No test needs an API key or a running LLM: they all use the scripted model.
 | Persistence | PostgreSQL 17, Flyway, `JdbcClient` |
 | Observability | SLF4J + Log4j2 (ECS JSON), Micrometer (Observation, Prometheus), OpenTelemetry (OTLP), Jaeger, Grafana |
 | Testing | JUnit 5, AssertJ, MockMvc, Testcontainers 2, MCP Java SDK client, `TestObservationRegistry` |
-| Build & CI | Maven, GitHub Actions, Dependabot |
+| Build & CI | Maven 3.10 (Maven Wrapper), GitHub Actions, Dependabot |
 
 ## Roadmap
 

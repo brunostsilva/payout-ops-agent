@@ -1,4 +1,4 @@
-# Scrapes the app running on the host (mvn spring-boot:run), not in a container.
+# Scrapes the app running on the host (./mvnw spring-boot:run), not in a container.
 # host.docker.internal is mapped to the host in compose.yaml, which also makes it work on Linux.
 global:
   scrape_interval: 15s
