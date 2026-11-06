@@ -61,6 +61,11 @@ class ObservabilityIntegrationTest {
                 .contains("Agent answered with 1 tool call(s) [proposePayoutHold]")
                 .as("the question, the hold reason and the decision note are never logged")
                 .doesNotContain(SECRET_DETAIL);
+        assertThat(logs.lines().filter(line -> line.contains("WARN") && line.contains(holdId)))
+                .as("the conflict is one WARN line, not repeated by the HTTP error handler")
+                .singleElement()
+                .asString()
+                .contains("was already APPROVED when bob tried to decide it");
         assertThat(logs.lines().filter(line -> line.contains("Agent answered with")))
                 .as("agent log lines carry the request's trace id")
                 .singleElement()

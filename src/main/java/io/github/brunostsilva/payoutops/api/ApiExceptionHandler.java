@@ -6,16 +6,16 @@ import io.github.brunostsilva.payoutops.application.SellerNotFoundException;
 import io.github.brunostsilva.payoutops.domain.HoldAlreadyDecidedException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.slf4j.event.Level;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 /**
- * Maps domain exceptions to RFC 9457 problem details. Lookups of unknown ids are routine client
- * errors (DEBUG); conflicts and model failures are worth an operator's attention (WARN). Stack traces
- * are not logged: these are expected outcomes, not bugs.
+ * Maps domain exceptions to RFC 9457 problem details. The response is only logged at DEBUG: unknown ids
+ * are routine client errors, and conflicts and model failures are already logged at WARN, with their
+ * details, by {@code PayoutHoldService} and {@code PayoutAgent}, so each event is one WARN line. Stack
+ * traces are not logged: these are expected outcomes, not bugs.
  */
 @RestControllerAdvice
 class ApiExceptionHandler {
@@ -24,26 +24,26 @@ class ApiExceptionHandler {
 
     @ExceptionHandler(SellerNotFoundException.class)
     ProblemDetail sellerNotFound(SellerNotFoundException exception) {
-        return problem(HttpStatus.NOT_FOUND, "Seller not found", exception, Level.DEBUG);
+        return problem(HttpStatus.NOT_FOUND, "Seller not found", exception);
     }
 
     @ExceptionHandler(HoldNotFoundException.class)
     ProblemDetail holdNotFound(HoldNotFoundException exception) {
-        return problem(HttpStatus.NOT_FOUND, "Hold not found", exception, Level.DEBUG);
+        return problem(HttpStatus.NOT_FOUND, "Hold not found", exception);
     }
 
     @ExceptionHandler(HoldAlreadyDecidedException.class)
     ProblemDetail holdAlreadyDecided(HoldAlreadyDecidedException exception) {
-        return problem(HttpStatus.CONFLICT, "Hold already decided", exception, Level.WARN);
+        return problem(HttpStatus.CONFLICT, "Hold already decided", exception);
     }
 
     @ExceptionHandler(AgentLoopLimitExceededException.class)
     ProblemDetail agentLoopLimitExceeded(AgentLoopLimitExceededException exception) {
-        return problem(HttpStatus.BAD_GATEWAY, "The model did not produce an answer", exception, Level.WARN);
+        return problem(HttpStatus.BAD_GATEWAY, "The model did not produce an answer", exception);
     }
 
-    private static ProblemDetail problem(HttpStatus status, String title, RuntimeException exception, Level level) {
-        log.atLevel(level)
+    private static ProblemDetail problem(HttpStatus status, String title, RuntimeException exception) {
+        log.atDebug()
                 .setMessage("{} {}: {}")
                 .addArgument(status.value())
                 .addArgument(title)
