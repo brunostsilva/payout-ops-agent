@@ -9,8 +9,9 @@ changed, by how much, and why.
 > [roadmap](#roadmap)). The current version contains the payout domain, persistence, a
 > reproducible demo scenario, a REST API, the **LLM agent** (Spring AI tool calling, with a
 > deterministic offline model, OpenAI and Ollama), **human-in-the-loop payout holds**, an **MCP
-> server** exposing the same tools, and **OpenTelemetry tracing** viewable in Jaeger. Everything
-> runs locally for free (only the optional `openai` profile is paid).
+> server** exposing the same tools, and **observability**: Log4j2 audit logs correlated with
+> OpenTelemetry traces, Prometheus metrics and an optional Jaeger + Prometheus + Grafana stack.
+> Everything runs locally for free (only the optional `openai` profile is paid).
 
 > **Note on the data:** all sellers, orders and amounts in `db/demo` are **synthetic**.
 
@@ -61,8 +62,17 @@ be tested exhaustively and reused by the REST API, the agent tools and the MCP s
   - proposals are idempotent: at most one active (pending or approved) hold per seller and week.
 - **MCP server** (Streamable HTTP at `/mcp`): the same five tools, usable from Claude Desktop, MCP
   Inspector or any other MCP client.
-- **Tracing** with Micrometer and OpenTelemetry: one span per agent request with every tool call
-  (and real model call) nested under it, exported to Jaeger over OTLP.
+- **Observability**, vendor-neutral and opt-in beyond the console:
+  - **Log4j2** behind SLF4J, with audit lines for every hold proposal and decision and one line per
+    agent question, each carrying the trace id; questions, prompts, reasons and notes are never
+    logged;
+  - optional **ECS JSON logs** (`json-logs` profile);
+  - **Prometheus metrics** at `/actuator/prometheus` (agent latency, hold proposals, decisions and
+    conflicts) and Kubernetes-style **health probes**;
+  - **tracing** with Micrometer and OpenTelemetry: one span per agent request with every tool call
+    (and real model call) nested under it, exported to Jaeger over OTLP;
+  - an optional Docker Compose stack: **Jaeger, Prometheus and Grafana** with a ready-made
+    dashboard.
 - **Tests**: fast unit tests for the domain, application and agent layers, plus end-to-end
   integration tests against a real Postgres via **Testcontainers**.
 - **CI** on GitHub Actions running the full suite on Java 25.
@@ -272,6 +282,69 @@ local app.
 
 ## Observability
 
+Everything here is built on open formats (SLF4J, ECS JSON, Prometheus, OTLP), so no vendor agent
+or SDK is in the app. With no extra profile and no Docker, the app just writes readable logs to the
+console and exposes metrics that nobody has to scrape. Plugging in Grafana, Datadog, New Relic,
+Elastic or any other backend is configuration, not code.
+
+### Logs
+
+Logging goes through **SLF4J** with **Log4j2** as the backend, instead of Spring Boot's default
+Logback. A Maven Enforcer rule fails the build if Logback ever comes back through a transitive
+dependency, and `LoggingBackendTest` checks the binding at runtime.
+
+The app logs what an operator or auditor needs, and nothing else:
+
+| Event | Level | Example |
+|---|---|---|
+| Hold proposed / reused | `INFO` | `Hold 3f2c… proposed by payout-ops-agent for seller seller-123 week 2026-10-26` |
+| Hold approved / rejected | `INFO` | `Hold 3f2c… APPROVED by ana` |
+| Decision on an already-decided hold | `WARN` | `Hold 3f2c… was already APPROVED when bob tried to decide it` |
+| Agent answer | `INFO` | `Agent answered with 1 tool call(s) [comparePayoutWithPreviousWeek] in 42 ms using ScriptedChatModel` |
+| Agent loop limit | `WARN` | `Agent gave up after 5 tool rounds without an answer using OpenAiChatModel` |
+| Unknown seller / hold | `DEBUG` | `404 Hold not found: Hold 3f2c… not found` |
+
+- **Correlation:** lines written while handling a request carry its trace and span ids (added by
+  Spring Boot to every line when tracing is on the classpath), so a log line leads straight to the trace in Jaeger and
+  back.
+- **No sensitive text:** the question, prompts, tool results, hold reasons and decision notes can
+  contain customer details, so they are never logged. Only ids, statuses, counts and durations are.
+  `ObservabilityIntegrationTest` asserts it.
+- **Structured fields:** events use SLF4J 2's fluent API (`addKeyValue`), so `hold.id`,
+  `hold.status`, `seller.id`, `agent.tool_calls`, `agent.duration_ms`… become separate fields in
+  JSON output instead of being parsed out of the message.
+
+**JSON logs.** The `json-logs` profile switches the console to one JSON object per line in
+[Elastic Common Schema](https://www.elastic.co/guide/en/ecs/current/index.html), which most log
+backends and shippers read as is:
+
+```bash
+mvn spring-boot:test-run -Dspring-boot.run.profiles=demo,json-logs
+```
+
+Each line has the usual ECS fields (`@timestamp`, `log.level`, `log.logger`, `message`,
+`service.name`…), the trace and span ids, and the event's own fields (`hold.id`, `hold.status`,
+`agent.duration_ms`…).
+
+### Metrics
+
+`/actuator/prometheus` exposes everything Micrometer collects, in the Prometheus text format:
+
+| Metric | Type | Tags | Meaning |
+|---|---|---|---|
+| `payout_agent_ask_seconds` | timer | `payout_agent_chat_model`, `error` | One sample per agent question |
+| `payout_holds_proposed_total` | counter | `outcome` (`created`, `reused_pending`, `reused_approved`), `proposed_by` | Hold proposals |
+| `payout_holds_decided_total` | counter | `status` (`approved`, `rejected`) | Analyst decisions |
+| `payout_holds_decision_conflicts_total` | counter | | Decisions refused because the hold was already decided |
+| `spring_ai_tool_seconds`, `gen_ai_client_*` | timers | | Tool calls and model calls (Spring AI) |
+| `http_server_requests_seconds`, `jvm_*`, `hikaricp_*` … | | | Spring Boot defaults |
+
+Tags only take bounded values (never ids or analyst names), so the number of time series stays
+small. Health probes for orchestrators are at `/actuator/health/liveness` and
+`/actuator/health/readiness`.
+
+### Traces
+
 Every agent request produces a trace:
 
 ```
@@ -291,17 +364,29 @@ payout agent ask                          payout.agent.ask (chat_model, tool_cal
   (`spring.ai.chat.observations.log-prompt`, `log-completion` and
   `spring.ai.tools.observations.include-content` are all `false`), so ledger data doesn't leak
   into the tracing backend.
+- Spans are exported over OTLP/HTTP only when the `tracing` profile is active. Without it no
+  exporter is created, so tests and normal runs send nothing anywhere.
 
-To see traces in Jaeger (free, runs in Docker):
+### Local observability stack (optional)
+
+Jaeger, Prometheus and Grafana run in Docker, are free, and only start with the `observability`
+Compose profile:
 
 ```bash
-docker compose --profile observability up -d     # Jaeger UI on http://localhost:16686
+docker compose --profile observability up -d
 mvn spring-boot:test-run -Dspring-boot.run.profiles=demo,tracing
 ```
 
-Ask the agent a question, then open Jaeger and search for the `payout-ops-agent` service. Spans
-are exported over OTLP/HTTP only when the `tracing` profile is active. Without it no exporter is
-created, so tests and normal runs send nothing anywhere.
+| Tool | URL | What to look at |
+|---|---|---|
+| Grafana | http://localhost:3000 | **Payout Ops → Payout Ops Agent** dashboard (no login); *Explore* for Prometheus and Jaeger |
+| Prometheus | http://localhost:9090 | *Status → Targets* should show `payout-ops-agent` as up; query e.g. `payout_holds_proposed_total` |
+| Jaeger | http://localhost:16686 | Search for the `payout-ops-agent` service |
+
+Ask the agent a few questions (see [Human-in-the-loop holds](#human-in-the-loop-holds)) and the
+dashboard fills in within about 15 seconds. Prometheus scrapes the app on the host through
+`host.docker.internal`, which Compose maps on Linux as well as on Docker Desktop. The configuration
+lives in [`observability/`](observability).
 
 ## Running locally
 
@@ -373,7 +458,8 @@ Example response from the comparison endpoint (abridged):
 | `GET` | `/api/holds/{id}` | One hold, including its decision if any. |
 | `POST` | `/api/holds/{id}/approve` | Body `{"analyst": "...", "note": "..."}` (note optional). |
 | `POST` | `/api/holds/{id}/reject` | Body `{"analyst": "...", "note": "..."}` (note required). |
-| `GET` | `/actuator/health` | Health check. |
+| `GET` | `/actuator/health` | Health check; `/actuator/health/liveness` and `/readiness` for probes. |
+| `GET` | `/actuator/prometheus` | Metrics in the Prometheus text format (see [Metrics](#metrics)). |
 
 Unknown sellers and holds return `404`, invalid input (blank seller id or question, missing
 analyst or rejection note) returns `400`, deciding a hold that was already decided returns `409`,
@@ -396,7 +482,8 @@ to the model so it can tell the user.
 | `OTLP_TRACES_ENDPOINT` | `http://localhost:4318/v1/traces` | OTLP/HTTP traces endpoint (`tracing` profile) |
 
 Spring profiles: `demo` loads the sample data; `openai` / `ollama` select the chat model (without
-either, the scripted model is used); `tracing` exports traces over OTLP.
+either, the scripted model is used); `tracing` exports traces over OTLP; `json-logs` writes ECS JSON
+logs instead of the readable console format.
 
 The demo seed is **opt-in**: it is only loaded when the `demo` Spring profile is active (see
 `application-demo.yml`). Without it, Flyway only applies the schema, so pointing the service at a
@@ -414,13 +501,15 @@ mvn verify
   including tool errors, hold proposals and a model that never stops calling tools, and checks
   with a `TestObservationRegistry` that tool spans are nested under the request span.
   `PayoutHoldTest` and `PayoutHoldServiceTest` cover the hold lifecycle, idempotent proposals and
-  a decision lost to a concurrent one.
+  a decision lost to a concurrent one, plus the hold metrics (with a `SimpleMeterRegistry`).
 - **Integration tests**: boot the full application against a real Postgres container.
   `PayoutDemoScenarioIntegrationTest`, `AgentEndpointIntegrationTest` and
   `HoldWorkflowIntegrationTest` run with the `demo` profile and exercise the service, the agent,
   the hold workflow and the HTTP API end to end; `McpServerIntegrationTest` starts the app on a
   random port and uses a real MCP client to list and call the tools; `DefaultProfileIntegrationTest`
-  checks that no demo data is loaded without that profile.
+  checks that no demo data is loaded without that profile; `ObservabilityIntegrationTest` checks
+  the audit log lines and their trace ids, that no question, reason or note text is logged, the
+  business metrics on `/actuator/prometheus` and the health probes.
 
 No test needs an API key or a running LLM: they all use the scripted model.
 
@@ -453,6 +542,12 @@ No test needs an API key or a running LLM: they all use the scripted model.
 - **A scripted model instead of mocks.** `ScriptedChatModel` implements Spring AI's `ChatModel`
   and goes through the real tool-calling loop, so the tests (and anyone trying the project
   without an API key) exercise the same code path as OpenAI or Ollama.
+- **Log4j2, but through SLF4J.** Application code only depends on the SLF4J API, so the backend is a
+  build decision. Log4j2 brings asynchronous loggers and garbage-free logging for high-volume
+  services, and Spring Boot's structured logging (ECS) works the same with it.
+- **Open formats, no vendor SDK.** Logs are ECS JSON on stdout, metrics are pulled by Prometheus,
+  traces leave over OTLP. Any observability platform can consume them, and none is required to
+  run the app.
 
 ## Tech stack
 
@@ -462,7 +557,7 @@ No test needs an API key or a running LLM: they all use the scripted model.
 | Framework | Spring Boot 4.1 (Spring Framework 7, Jackson 3) |
 | AI | Spring AI 2.0: tool calling, OpenAI and Ollama starters, MCP server |
 | Persistence | PostgreSQL 17, Flyway, `JdbcClient` |
-| Observability | Micrometer Observation, OpenTelemetry (OTLP), Jaeger |
+| Observability | SLF4J + Log4j2 (ECS JSON), Micrometer (Observation, Prometheus), OpenTelemetry (OTLP), Jaeger, Grafana |
 | Testing | JUnit 5, AssertJ, MockMvc, Testcontainers 2, MCP Java SDK client, `TestObservationRegistry` |
 | Build & CI | Maven, GitHub Actions, Dependabot |
 
@@ -478,6 +573,8 @@ No test needs an API key or a running LLM: they all use the scripted model.
 - [x] **MCP server and observability**: expose the same tools over the Model Context Protocol
   (usable from Claude Desktop and other MCP clients); Micrometer/OpenTelemetry traces for every
   model and tool call, viewable in Jaeger via Docker Compose
+- [x] **Logs and metrics**: Log4j2 audit logs correlated with traces (ECS JSON optional),
+  Prometheus metrics and health probes, Prometheus + Grafana in Docker Compose
 
 ## License
 
