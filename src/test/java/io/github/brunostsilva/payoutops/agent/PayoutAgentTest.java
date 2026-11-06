@@ -16,6 +16,7 @@ import io.github.brunostsilva.payoutops.domain.LedgerEntry;
 import io.github.brunostsilva.payoutops.domain.PayoutPeriod;
 import io.github.brunostsilva.payoutops.domain.Seller;
 import io.github.brunostsilva.payoutops.domain.SellerRepository;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.micrometer.observation.tck.TestObservationRegistry;
 import io.micrometer.observation.tck.TestObservationRegistryAssert;
 import java.time.Clock;
@@ -63,7 +64,7 @@ class PayoutAgentTest {
     private final InMemoryPayoutHoldRepository holds = new InMemoryPayoutHoldRepository();
     private final PayoutTools tools = new PayoutTools(payoutService);
     private final PayoutActionTools actionTools =
-            new PayoutActionTools(new PayoutHoldService(sellers, holds, clock));
+            new PayoutActionTools(new PayoutHoldService(sellers, holds, clock, new SimpleMeterRegistry()));
     private final PayoutAgent agent =
             new PayoutAgent(new ScriptedChatModel(new JsonMapper()), tools, actionTools, clock, observations);
 
