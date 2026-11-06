@@ -302,7 +302,10 @@ The app logs what an operator or auditor needs, and nothing else:
 | Decision on an already-decided hold | `WARN` | `Hold 3f2c… was already APPROVED when bob tried to decide it` |
 | Agent answer | `INFO` | `Agent answered with 1 tool call(s) [comparePayoutWithPreviousWeek] in 42 ms using ScriptedChatModel` |
 | Agent loop limit | `WARN` | `Agent gave up after 5 tool rounds without an answer using OpenAiChatModel` |
-| Unknown seller / hold | `DEBUG` | `404 Hold not found: Hold 3f2c… not found` |
+| Error response (404, 409, 502) | `DEBUG` | `404 Hold not found: Hold 3f2c… not found` |
+
+Each event is logged once: conflicts and agent failures get their `WARN` line, with the details, where
+they happen, and the HTTP error handler only adds a `DEBUG` line for the response.
 
 - **Correlation:** lines written while handling a request carry its trace and span ids (added by
   Spring Boot to every line when tracing is on the classpath), so a log line leads straight to the trace in Jaeger and
@@ -387,6 +390,9 @@ Ask the agent a few questions (see [Human-in-the-loop holds](#human-in-the-loop-
 dashboard fills in within about 15 seconds. Prometheus scrapes the app on the host through
 `host.docker.internal`, which Compose maps on Linux as well as on Docker Desktop. The configuration
 lives in [`observability/`](observability).
+
+None of these tools asks for a login (Grafana runs with anonymous admin), so their ports are bound
+to `127.0.0.1`: they are reachable from your machine only, not from the rest of the network.
 
 ## Running locally
 
