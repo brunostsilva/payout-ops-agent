@@ -6,6 +6,10 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
@@ -38,6 +42,8 @@ public class PayoutAgent {
 
     static final int MAX_TOOL_ROUNDS = 5;
     static final String OBSERVATION_NAME = "payout.agent.ask";
+
+    private static final Logger log = LoggerFactory.getLogger(PayoutAgent.class);
 
     private static final String SYSTEM_PROMPT = """
             You are a payout operations assistant for a marketplace. You help analysts understand sellers' payouts.
@@ -88,20 +94,52 @@ public class PayoutAgent {
     }
 
     public AgentAnswer ask(String question) {
+        String chatModelName = chatModel.getClass().getSimpleName();
         Observation observation = Observation.createNotStarted(OBSERVATION_NAME, observations)
                 .contextualName("payout agent ask")
-                .lowCardinalityKeyValue("payout.agent.chat_model", chatModel.getClass().getSimpleName())
+                .lowCardinalityKeyValue("payout.agent.chat_model", chatModelName)
                 .start();
+        long startedAt = System.nanoTime();
+        // Logged inside the observation scope so every line carries the request's trace and span ids.
+        // The question text, prompts and tool results are never logged: only sizes and metadata.
         try (Observation.Scope scope = observation.openScope()) {
             AgentAnswer answer = answer(question);
             observation.highCardinalityKeyValue("payout.agent.tool_calls", String.valueOf(answer.toolCalls().size()));
+            String toolNames = answer.toolCalls().stream().map(ToolInvocation::tool).collect(Collectors.joining(","));
+            long durationMs = elapsedMillis(startedAt);
+            log.atInfo()
+                    .setMessage("Agent answered with {} tool call(s) [{}] in {} ms using {}")
+                    .addArgument(answer.toolCalls().size())
+                    .addArgument(toolNames)
+                    .addArgument(durationMs)
+                    .addArgument(chatModelName)
+                    .addKeyValue("agent.chat_model", chatModelName)
+                    .addKeyValue("agent.tool_calls", answer.toolCalls().size())
+                    .addKeyValue("agent.tools", toolNames)
+                    .addKeyValue("agent.question_length", question.length())
+                    .addKeyValue("agent.duration_ms", durationMs)
+                    .log();
             return answer;
+        } catch (AgentLoopLimitExceededException loop) {
+            observation.error(loop);
+            log.atWarn()
+                    .setMessage("Agent gave up after {} tool rounds without an answer using {}")
+                    .addArgument(MAX_TOOL_ROUNDS)
+                    .addArgument(chatModelName)
+                    .addKeyValue("agent.chat_model", chatModelName)
+                    .addKeyValue("agent.duration_ms", elapsedMillis(startedAt))
+                    .log();
+            throw loop;
         } catch (RuntimeException failure) {
             observation.error(failure);
             throw failure;
         } finally {
             observation.stop();
         }
+    }
+
+    private static long elapsedMillis(long startedAt) {
+        return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
     }
 
     private AgentAnswer answer(String question) {
