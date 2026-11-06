@@ -1,0 +1,10 @@
+# Scrapes the app running on the host (mvn spring-boot:run), not in a container.
+# host.docker.internal is mapped to the host in compose.yaml, which also makes it work on Linux.
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: payout-ops-agent
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["host.docker.internal:8080"]

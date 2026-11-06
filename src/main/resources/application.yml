@@ -36,7 +36,14 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        # /actuator/prometheus is a plain-text scrape endpoint: any Prometheus-compatible tool can read it
+        # (see the "observability" compose profile), and nothing happens when nobody scrapes it.
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        # /actuator/health/liveness and /readiness, for Kubernetes or any container orchestrator.
+        enabled: true
   otlp:
     metrics:
       export:

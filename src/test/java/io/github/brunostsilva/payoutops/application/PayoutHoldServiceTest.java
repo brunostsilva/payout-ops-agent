@@ -12,6 +12,7 @@ import io.github.brunostsilva.payoutops.domain.PayoutPeriod;
 import io.github.brunostsilva.payoutops.domain.Seller;
 import io.github.brunostsilva.payoutops.domain.SellerId;
 import io.github.brunostsilva.payoutops.domain.SellerRepository;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -29,7 +30,8 @@ class PayoutHoldServiceTest {
             id -> id.equals(SELLER) ? Optional.of(new Seller(SELLER, "Test Seller", BRL)) : Optional.empty();
     private final InMemoryPayoutHoldRepository holds = new InMemoryPayoutHoldRepository();
     private final Clock clock = Clock.fixed(Instant.parse("2026-10-31T12:00:00Z"), ZoneOffset.UTC);
-    private final PayoutHoldService service = new PayoutHoldService(sellers, holds, clock);
+    private final SimpleMeterRegistry meters = new SimpleMeterRegistry();
+    private final PayoutHoldService service = new PayoutHoldService(sellers, holds, clock, meters);
 
     @Test
     void proposalIsPendingAndListed() {
@@ -122,7 +124,7 @@ class PayoutHoldServiceTest {
                 super.insert(hold);
             }
         };
-        PayoutHoldService racingService = new PayoutHoldService(sellers, racingHolds, clock);
+        PayoutHoldService racingService = new PayoutHoldService(sellers, racingHolds, clock, new SimpleMeterRegistry());
 
         PayoutHold hold = racingService.propose(SELLER, WEEK, "two chargebacks", "agent").hold();
 
@@ -135,5 +137,74 @@ class PayoutHoldServiceTest {
         assertThatThrownBy(() -> service.propose(new SellerId("ghost"), WEEK, "reason", "agent"))
                 .isInstanceOf(SellerNotFoundException.class);
         assertThatThrownBy(() -> service.get(UUID.randomUUID())).isInstanceOf(HoldNotFoundException.class);
+    }
+
+    @Test
+    void proposalsAreCountedByOutcomeAndProposer() {
+        PayoutHold hold = service.propose(SELLER, WEEK, "two chargebacks", "agent").hold();
+        service.propose(SELLER, WEEK, "asked again", "agent");
+        service.approve(hold.id(), "ana", null);
+        service.propose(SELLER, WEEK, "asked once more", "mcp-client");
+
+        assertThat(proposed("created", "agent")).isEqualTo(1);
+        assertThat(proposed("reused_pending", "agent")).isEqualTo(1);
+        assertThat(proposed("reused_approved", "mcp-client")).isEqualTo(1);
+    }
+
+    @Test
+    void decisionsAreCountedByStatusWithoutAnalystNames() {
+        PayoutHold first = service.propose(SELLER, WEEK, "two chargebacks", "agent").hold();
+        service.reject(first.id(), "ana", "false positive");
+        PayoutHold second = service.propose(SELLER, WEEK, "new chargeback", "agent").hold();
+        service.approve(second.id(), "bob", null);
+
+        assertThat(meters.get(PayoutHoldService.DECIDED_METRIC).tag("status", "approved").counter().count())
+                .isEqualTo(1);
+        assertThat(meters.get(PayoutHoldService.DECIDED_METRIC).tag("status", "rejected").counter().count())
+                .isEqualTo(1);
+        assertThat(meters.get(PayoutHoldService.DECIDED_METRIC).meters())
+                .allSatisfy(meter -> assertThat(meter.getId().getTags())
+                        .extracting(tag -> tag.getKey())
+                        .containsExactly("status"));
+    }
+
+    @Test
+    void decisionConflictsAreCounted() {
+        PayoutHold hold = service.propose(SELLER, WEEK, "two chargebacks", "agent").hold();
+        holds.recordDecision(hold.reject("bob", "false positive", clock.instant()));
+
+        assertThatThrownBy(() -> service.approve(hold.id(), "ana", null))
+                .isInstanceOf(HoldAlreadyDecidedException.class);
+
+        assertThat(meters.get(PayoutHoldService.DECISION_CONFLICTS_METRIC).counter().count()).isEqualTo(1);
+        assertThat(meters.find(PayoutHoldService.DECIDED_METRIC).counters()).isEmpty();
+    }
+
+    @Test
+    void aDecisionThatLosesTheWriteRaceIsACountedConflict() {
+        // The hold is still pending when we read it, but another analyst's rejection lands before our write.
+        InMemoryPayoutHoldRepository racingHolds = new InMemoryPayoutHoldRepository() {
+            @Override
+            public synchronized boolean recordDecision(PayoutHold decided) {
+                PayoutHold stored = findById(decided.id()).orElseThrow();
+                super.recordDecision(stored.reject("bob", "false positive", clock.instant()));
+                return super.recordDecision(decided);
+            }
+        };
+        PayoutHoldService racingService = new PayoutHoldService(sellers, racingHolds, clock, meters);
+        PayoutHold hold = racingService.propose(SELLER, WEEK, "two chargebacks", "agent").hold();
+
+        assertThatThrownBy(() -> racingService.approve(hold.id(), "ana", null))
+                .isInstanceOf(HoldAlreadyDecidedException.class)
+                .hasMessageContaining("rejected");
+        assertThat(meters.get(PayoutHoldService.DECISION_CONFLICTS_METRIC).counter().count()).isEqualTo(1);
+    }
+
+    private double proposed(String outcome, String proposedBy) {
+        return meters.get(PayoutHoldService.PROPOSED_METRIC)
+                .tag("outcome", outcome)
+                .tag("proposed_by", proposedBy)
+                .counter()
+                .count();
     }
 }
