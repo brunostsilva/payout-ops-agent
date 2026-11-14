@@ -6,6 +6,7 @@ import io.github.brunostsilva.payoutops.domain.Money;
 import io.github.brunostsilva.payoutops.domain.PayoutBreakdown;
 import io.github.brunostsilva.payoutops.domain.PayoutComparison;
 import io.github.brunostsilva.payoutops.domain.PayoutHold;
+import io.github.brunostsilva.payoutops.domain.PayoutTrend;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -73,6 +74,41 @@ public final class PayoutResponses {
                     MoneyResponse.from(comparison.netChange()),
                     comparison.netChangePercent().orElse(null),
                     comparison.drivers().stream().map(DriverResponse::from).toList());
+        }
+    }
+
+    /**
+     * Weekly net payouts, oldest first. {@code averageWeeklyGrowthPercent} is the compound rate from the
+     * first week to the last, which only depends on those two; {@code largestWeeklyChange} follows the
+     * path in between. Each is null when it isn't defined.
+     */
+    public record PayoutTrendResponse(
+            String sellerId,
+            List<WeeklyNetResponse> weeks,
+            BigDecimal totalChangePercent,
+            BigDecimal averageWeeklyGrowthPercent,
+            WeeklyChangeResponse largestWeeklyChange) {
+
+        public static PayoutTrendResponse from(PayoutTrend trend) {
+            return new PayoutTrendResponse(
+                    trend.first().sellerId().value(),
+                    trend.periods().stream().map(WeeklyNetResponse::from).toList(),
+                    trend.totalChangePercent().orElse(null),
+                    trend.averageGrowthPercent().orElse(null),
+                    trend.largestPeriodChange().map(WeeklyChangeResponse::from).orElse(null));
+        }
+    }
+
+    /** The change of the net payout into the week starting {@code periodStart}, from the week before. */
+    public record WeeklyChangeResponse(LocalDate periodStart, LocalDate periodEnd, BigDecimal percent) {
+        public static WeeklyChangeResponse from(PayoutTrend.PeriodChange change) {
+            return new WeeklyChangeResponse(change.period().start(), change.period().end(), change.percent());
+        }
+    }
+
+    public record WeeklyNetResponse(LocalDate periodStart, LocalDate periodEnd, MoneyResponse net) {
+        public static WeeklyNetResponse from(PayoutBreakdown payout) {
+            return new WeeklyNetResponse(payout.period().start(), payout.period().end(), MoneyResponse.from(payout.net()));
         }
     }
 

@@ -1,6 +1,6 @@
 # payout-ops-agent
 
-An AI-assisted payout operations service for marketplaces, built with **Java 25**,
+An AI-assisted payout operations service for marketplaces, built with **Java 27**,
 **Spring Boot 4** and **Spring AI 2**. Operations analysts ask questions like *"why did seller 123's payout drop
 this week?"* and get an answer grounded in the seller's actual ledger: which components
 changed, by how much, and why.
@@ -42,13 +42,15 @@ be tested exhaustively and reused by the REST API, the agent tools and the MCP s
   - `PayoutCalculator`, which aggregates entries using **exhaustive pattern matching** over the
     sealed hierarchy (adding a new entry type is a compile error until it is handled);
   - `PayoutComparison`, which explains a change between two periods as per-component
-    **drivers** that always add up to the net change.
+    **drivers** that always add up to the net change;
+  - `PayoutTrend`, the net payouts of several consecutive weeks and their **average weekly growth**,
+    compounded and computed in decimal arithmetic with Java 27's `BigDecimal.rootn`.
 - **Persistence** with Postgres, Flyway migrations and Spring's `JdbcClient` (plain SQL, no ORM).
 - **Reproducible demo scenario** seeded by a repeatable Flyway migration.
 - **REST API** with `ProblemDetail` (RFC 9457) error responses.
 - **LLM agent** (`agent/`) built on **Spring AI**:
-  - four read-only `@Tool`s over the payout service (comparison, weekly payout, ledger entries,
-    commission rules);
+  - five read-only `@Tool`s over the payout service (comparison, weekly payout, ledger entries,
+    commission rules, trend);
   - a tool-calling loop driven by the application, which returns a **trace of every tool call**
     with the answer and stops models that never converge;
   - `POST /api/agent/ask`;
@@ -60,7 +62,7 @@ be tested exhaustively and reused by the REST API, the agent tools and the MCP s
   - analysts approve or reject proposals through `/api/holds`, and each hold can be decided
     **exactly once**, even with concurrent reviewers;
   - proposals are idempotent: at most one active (pending or approved) hold per seller and week.
-- **MCP server** (Streamable HTTP at `/mcp`): the same five tools, usable from Claude Desktop, MCP
+- **MCP server** (Streamable HTTP at `/mcp`): the same six tools, usable from Claude Desktop, MCP
   Inspector or any other MCP client.
 - **Observability**, vendor-neutral and opt-in beyond the console:
   - **Log4j2** behind SLF4J, with audit lines for every hold proposal and decision and one line per
@@ -75,7 +77,7 @@ be tested exhaustively and reused by the REST API, the agent tools and the MCP s
     dashboard.
 - **Tests**: fast unit tests for the domain, application and agent layers, plus end-to-end
   integration tests against a real Postgres via **Testcontainers**.
-- **CI** on GitHub Actions running the full suite on Java 25.
+- **CI** on GitHub Actions running the full suite on Java 27.
 
 ## Architecture
 
@@ -161,6 +163,7 @@ sequenceDiagram
 | `getWeeklyPayout(sellerId, weekOf)` | One week's breakdown |
 | `getLedgerEntries(sellerId, weekOf)` | Individual entries, including chargeback reasons and adjustment descriptions |
 | `getCommissionRules(sellerId)` | Commission rate history with the reason for each change |
+| `getPayoutTrend(sellerId, weekOf, weeks)` | Weekly net payouts of the last `weeks` weeks (2 to 26), with the total change, the average weekly growth and the largest week-over-week change, to tell a one-off change from a trend |
 | `proposePayoutHold(sellerId, weekOf, reason)` | **The only write tool.** Records a `PENDING` hold proposal (or returns the existing one) and reminds the model that nothing was held. See [Human-in-the-loop holds](#human-in-the-loop-holds). |
 
 The model is chosen with a Spring profile:
@@ -396,7 +399,7 @@ to `127.0.0.1`: they are reachable from your machine only, not from the rest of 
 
 ## Running locally
 
-Requirements: **Java 25** and **Docker** (for Postgres and the integration tests). Maven doesn't
+Requirements: **Java 27** and **Docker** (for Postgres and the integration tests). Maven doesn't
 need to be installed: the **Maven Wrapper** (`./mvnw`, or `mvnw.cmd` on Windows) downloads the
 version pinned in `.mvn/wrapper/maven-wrapper.properties` (Maven 3.10.0) on its first run.
 
@@ -460,6 +463,7 @@ Example response from the comparison endpoint (abridged):
 |---|---|---|
 | `GET` | `/api/sellers/{sellerId}/payouts?weekOf=YYYY-MM-DD` | Payout breakdown for the Monday–Sunday week containing `weekOf`. |
 | `GET` | `/api/sellers/{sellerId}/payouts/comparison?weekOf=YYYY-MM-DD` | Compares that week with the previous one: net change, percentage and drivers sorted by impact. |
+| `GET` | `/api/sellers/{sellerId}/payouts/trend?weekOf=YYYY-MM-DD&weeks=8` | Net payouts of the `weeks` weeks (2 to 26, default 8) ending with the week of `weekOf`, oldest first, with the total change, the average weekly growth (null when the first or last week isn't positive) and the largest week-over-week change with its week. |
 | `GET` | `/api/sellers/{sellerId}/commission-rules` | Commission rate history, oldest first. |
 | `POST` | `/api/agent/ask` | Body `{"question": "..."}`. Returns `{answer, toolCalls}`, the answer plus the trace of every tool call. |
 | `GET` | `/api/holds?status=PENDING` | Holds with the given status (`PENDING` by default), oldest first. |
@@ -470,7 +474,7 @@ Example response from the comparison endpoint (abridged):
 | `GET` | `/actuator/prometheus` | Metrics in the Prometheus text format (see [Metrics](#metrics)). |
 
 Unknown sellers and holds return `404`, invalid input (blank seller id or question, missing
-analyst or rejection note) returns `400`, deciding a hold that was already decided returns `409`,
+analyst or rejection note, a trend outside 2 to 26 weeks) returns `400`, deciding a hold that was already decided returns `409`,
 and a model that keeps calling tools without answering returns `502`, all with a `ProblemDetail`
 body.
 Inside the agent, tool errors such as an unknown seller are not HTTP errors: they are passed back
@@ -532,6 +536,17 @@ No test needs an API key or a running LLM: they all use the scripted model.
   `current − previous` of each component's signed effect on the net payout, so the drivers always
   sum to the net change. The agent relies on this property to explain changes without doing
   arithmetic itself.
+- **Average growth in decimal arithmetic (Java 27).** `PayoutTrend.averageGrowthPercent()` is the
+  compound weekly rate `(last / first)^(1 / (n − 1)) − 1`. Java 27 added `BigDecimal.rootn`, so the
+  n-th root is taken in decimal arithmetic with a chosen precision (`DECIMAL64`) instead of going
+  through `double` and `Math.pow`, whose binary rounding would leak into amounts that are exact
+  decimals. It isn't defined from or to a payout that isn't positive.
+- **Two numbers to tell a trend from a one-off.** A compound rate depends only on the first and last
+  weeks: seven flat weeks and one 50% drop average about the same as a steady 9.4% weekly decline.
+  So the trend also reports the **largest week-over-week change** and its week. Close to the
+  average, the change was spread over the weeks (a trend); much larger, it happened in one week (a
+  one-off). The tool description tells the model to compare the two instead of trusting the
+  average alone.
 - **`JdbcClient` instead of JPA.** The ledger is append-only and read through a few explicit
   queries; plain SQL keeps the mapping to the sealed hierarchy obvious and avoids ORM overhead.
 - **Repeatable migration for demo data.** Schema changes stay in versioned migrations; the demo
@@ -561,7 +576,7 @@ No test needs an API key or a running LLM: they all use the scripted model.
 
 | | |
 |---|---|
-| Language | Java 25 (records, sealed interfaces, pattern matching) |
+| Language | Java 27 (records, sealed interfaces, pattern matching, `BigDecimal.rootn`) |
 | Framework | Spring Boot 4.1 (Spring Framework 7, Jackson 3) |
 | AI | Spring AI 2.0: tool calling, OpenAI and Ollama starters, MCP server |
 | Persistence | PostgreSQL 17, Flyway, `JdbcClient` |

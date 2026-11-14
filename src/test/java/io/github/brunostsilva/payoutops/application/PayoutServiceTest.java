@@ -11,8 +11,10 @@ import io.github.brunostsilva.payoutops.domain.CommissionRuleRepository;
 import io.github.brunostsilva.payoutops.domain.LedgerEntry;
 import io.github.brunostsilva.payoutops.domain.LedgerRepository;
 import io.github.brunostsilva.payoutops.domain.Money;
+import io.github.brunostsilva.payoutops.domain.PayoutBreakdown;
 import io.github.brunostsilva.payoutops.domain.PayoutComparison;
 import io.github.brunostsilva.payoutops.domain.PayoutPeriod;
+import io.github.brunostsilva.payoutops.domain.PayoutTrend;
 import io.github.brunostsilva.payoutops.domain.Seller;
 import io.github.brunostsilva.payoutops.domain.SellerId;
 import io.github.brunostsilva.payoutops.domain.SellerRepository;
@@ -53,6 +55,30 @@ class PayoutServiceTest {
 
         assertThat(comparison.previous().net()).isEqualTo(Money.of("900.00", "BRL"));
         assertThat(comparison.netChange()).isEqualTo(Money.of("-180.00", "BRL"));
+    }
+
+    @Test
+    void trendCoversConsecutivePeriodsOldestFirst() {
+        PayoutTrend trend = service.trend(SELLER, CURRENT, 3);
+
+        assertThat(trend.periods())
+                .extracting(PayoutBreakdown::period)
+                .containsExactly(CURRENT.previous().previous(), CURRENT.previous(), CURRENT);
+        assertThat(trend.periods())
+                .extracting(PayoutBreakdown::net)
+                .containsExactly(Money.of("0.00", "BRL"), Money.of("900.00", "BRL"), Money.of("720.00", "BRL"));
+        // Growth from a week without payout isn't defined; over the last two weeks it is.
+        assertThat(trend.averageGrowthPercent()).isEmpty();
+        assertThat(service.trend(SELLER, CURRENT, 2).averageGrowthPercent())
+                .hasValueSatisfying(rate -> assertThat(rate).isEqualByComparingTo("-20.0"));
+    }
+
+    @Test
+    void trendLengthIsBounded() {
+        assertThatThrownBy(() -> service.trend(SELLER, CURRENT, 1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("2 to 26");
+        assertThatThrownBy(() -> service.trend(SELLER, CURRENT, 27)).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

@@ -50,7 +50,20 @@ class McpServerIntegrationTest {
                         "getWeeklyPayout",
                         "getLedgerEntries",
                         "getCommissionRules",
+                        "getPayoutTrend",
                         "proposePayoutHold");
+    }
+
+    @Test
+    void trendToolReturnsTheWeeklyNetsAndTheAverageGrowth() {
+        McpSchema.CallToolResult result = client.callTool(new McpSchema.CallToolRequest(
+                "getPayoutTrend", Map.of("sellerId", "seller-123", "weekOf", "2026-10-26", "weeks", 2)));
+
+        assertThat(result.isError()).isNotEqualTo(Boolean.TRUE);
+        assertThat(text(result))
+                .contains("\"periodStart\":\"2026-10-19\"")
+                .contains("\"averageWeeklyGrowthPercent\":-27.5")
+                .contains("\"largestWeeklyChange\":{\"periodStart\":\"2026-10-26\"");
     }
 
     @Test

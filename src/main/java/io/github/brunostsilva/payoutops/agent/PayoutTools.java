@@ -4,6 +4,7 @@ import io.github.brunostsilva.payoutops.api.PayoutResponses.CommissionRuleRespon
 import io.github.brunostsilva.payoutops.api.PayoutResponses.LedgerEntryResponse;
 import io.github.brunostsilva.payoutops.api.PayoutResponses.PayoutComparisonResponse;
 import io.github.brunostsilva.payoutops.api.PayoutResponses.PayoutResponse;
+import io.github.brunostsilva.payoutops.api.PayoutResponses.PayoutTrendResponse;
 import io.github.brunostsilva.payoutops.application.PayoutService;
 import io.github.brunostsilva.payoutops.domain.PayoutPeriod;
 import io.github.brunostsilva.payoutops.domain.SellerId;
@@ -57,6 +58,20 @@ public class PayoutTools {
         return payoutService.ledgerEntries(seller(sellerId), week(weekOf)).stream()
                 .map(LedgerEntryResponse::from)
                 .toList();
+    }
+
+    @Tool(description = """
+            Returns a seller's weekly net payouts for the given number of consecutive Monday-to-Sunday weeks ending
+            with the week containing weekOf, oldest first, with: the total change from the first week to the last;
+            the average weekly growth (compounded), which depends only on the first and last weeks; and the largest
+            change between two consecutive weeks, with the week it happened. To tell a one-off change from a trend,
+            compare the last two: a largest weekly change close to the average growth means the change was spread
+            over the weeks (a trend), a much larger one means it happened in that single week (a one-off).""")
+    public PayoutTrendResponse getPayoutTrend(
+            @ToolParam(description = "Seller id, e.g. seller-123") String sellerId,
+            @ToolParam(description = "Any date inside the last week of the trend, formatted YYYY-MM-DD") String weekOf,
+            @ToolParam(description = "How many weeks, from 2 to 26") int weeks) {
+        return PayoutTrendResponse.from(payoutService.trend(seller(sellerId), week(weekOf), weeks));
     }
 
     @Tool(description = "Returns a seller's commission rate history, oldest first, with the reason for each change.")
