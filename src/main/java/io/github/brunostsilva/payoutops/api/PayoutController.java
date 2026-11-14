@@ -3,6 +3,7 @@ package io.github.brunostsilva.payoutops.api;
 import io.github.brunostsilva.payoutops.api.PayoutResponses.CommissionRuleResponse;
 import io.github.brunostsilva.payoutops.api.PayoutResponses.PayoutComparisonResponse;
 import io.github.brunostsilva.payoutops.api.PayoutResponses.PayoutResponse;
+import io.github.brunostsilva.payoutops.api.PayoutResponses.PayoutTrendResponse;
 import io.github.brunostsilva.payoutops.application.PayoutService;
 import io.github.brunostsilva.payoutops.domain.PayoutPeriod;
 import io.github.brunostsilva.payoutops.domain.SellerId;
@@ -40,6 +41,19 @@ class PayoutController {
             @RequestParam("weekOf") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate weekOf) {
         return PayoutComparisonResponse.from(
                 payoutService.compareWithPreviousPeriod(parseSellerId(sellerId), PayoutPeriod.weekOf(weekOf)));
+    }
+
+    /** Weekly net payouts for the {@code weeks} weeks ending with the week of {@code weekOf}, oldest first. */
+    @GetMapping("/payouts/trend")
+    PayoutTrendResponse trend(
+            @PathVariable("sellerId") String sellerId,
+            @RequestParam("weekOf") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate weekOf,
+            @RequestParam(name = "weeks", defaultValue = "8") int weeks) {
+        if (weeks < PayoutService.MIN_TREND_PERIODS || weeks > PayoutService.MAX_TREND_PERIODS) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "weeks must be between "
+                    + PayoutService.MIN_TREND_PERIODS + " and " + PayoutService.MAX_TREND_PERIODS + ", got " + weeks);
+        }
+        return PayoutTrendResponse.from(payoutService.trend(parseSellerId(sellerId), PayoutPeriod.weekOf(weekOf), weeks));
     }
 
     @GetMapping("/commission-rules")

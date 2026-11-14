@@ -2,6 +2,7 @@ package io.github.brunostsilva.payoutops.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -108,6 +109,37 @@ class PayoutDemoScenarioIntegrationTest {
                 .andExpect(jsonPath("$.netChangePercent").value(-27.5))
                 .andExpect(jsonPath("$.drivers[0].component").value("CHARGEBACKS"))
                 .andExpect(jsonPath("$.drivers[0].effectOnNet.amount").value(-1200.00));
+    }
+
+    @Test
+    void trendEndpointShowsTheWeeklyNetPayoutsAndTheirAverageGrowth() throws Exception {
+        mockMvc.perform(get("/api/sellers/seller-123/payouts/trend").param("weekOf", "2026-10-29").param("weeks", "2"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sellerId").value("seller-123"))
+                .andExpect(jsonPath("$.weeks.length()").value(2))
+                .andExpect(jsonPath("$.weeks[0].periodStart").value("2026-10-19"))
+                .andExpect(jsonPath("$.weeks[0].net.amount").value(8800.00))
+                .andExpect(jsonPath("$.weeks[1].periodStart").value("2026-10-26"))
+                .andExpect(jsonPath("$.weeks[1].net.amount").value(6380.00))
+                .andExpect(jsonPath("$.totalChangePercent").value(-27.5))
+                .andExpect(jsonPath("$.averageWeeklyGrowthPercent").value(-27.5));
+
+        // The seeded data starts the week of 2026-10-19: from the empty week before, growth isn't defined.
+        mockMvc.perform(get("/api/sellers/seller-123/payouts/trend").param("weekOf", "2026-10-29").param("weeks", "3"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.weeks[0].periodStart").value("2026-10-12"))
+                .andExpect(jsonPath("$.weeks[0].net.amount").value(0.0))
+                .andExpect(jsonPath("$.totalChangePercent").value(nullValue()))
+                .andExpect(jsonPath("$.averageWeeklyGrowthPercent").value(nullValue()));
+    }
+
+    @Test
+    void trendEndpointRejectsAnOutOfRangeNumberOfWeeks() throws Exception {
+        mockMvc.perform(get("/api/sellers/seller-123/payouts/trend").param("weekOf", "2026-10-29").param("weeks", "1"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value("weeks must be between 2 and 26, got 1"));
+        mockMvc.perform(get("/api/sellers/seller-123/payouts/trend").param("weekOf", "2026-10-29").param("weeks", "27"))
+                .andExpect(status().isBadRequest());
     }
 
     @Test
