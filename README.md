@@ -163,7 +163,7 @@ sequenceDiagram
 | `getWeeklyPayout(sellerId, weekOf)` | One week's breakdown |
 | `getLedgerEntries(sellerId, weekOf)` | Individual entries, including chargeback reasons and adjustment descriptions |
 | `getCommissionRules(sellerId)` | Commission rate history with the reason for each change |
-| `getPayoutTrend(sellerId, weekOf, weeks)` | Weekly net payouts of the last `weeks` weeks (2 to 26), with the total change and the average weekly growth, to tell a one-off change from a trend |
+| `getPayoutTrend(sellerId, weekOf, weeks)` | Weekly net payouts of the last `weeks` weeks (2 to 26), with the total change, the average weekly growth and the largest week-over-week change, to tell a one-off change from a trend |
 | `proposePayoutHold(sellerId, weekOf, reason)` | **The only write tool.** Records a `PENDING` hold proposal (or returns the existing one) and reminds the model that nothing was held. See [Human-in-the-loop holds](#human-in-the-loop-holds). |
 
 The model is chosen with a Spring profile:
@@ -463,7 +463,7 @@ Example response from the comparison endpoint (abridged):
 |---|---|---|
 | `GET` | `/api/sellers/{sellerId}/payouts?weekOf=YYYY-MM-DD` | Payout breakdown for the Monday–Sunday week containing `weekOf`. |
 | `GET` | `/api/sellers/{sellerId}/payouts/comparison?weekOf=YYYY-MM-DD` | Compares that week with the previous one: net change, percentage and drivers sorted by impact. |
-| `GET` | `/api/sellers/{sellerId}/payouts/trend?weekOf=YYYY-MM-DD&weeks=8` | Net payouts of the `weeks` weeks (2 to 26, default 8) ending with the week of `weekOf`, oldest first, with the total change and the average weekly growth (null when the first or last week isn't positive). |
+| `GET` | `/api/sellers/{sellerId}/payouts/trend?weekOf=YYYY-MM-DD&weeks=8` | Net payouts of the `weeks` weeks (2 to 26, default 8) ending with the week of `weekOf`, oldest first, with the total change, the average weekly growth (null when the first or last week isn't positive) and the largest week-over-week change with its week. |
 | `GET` | `/api/sellers/{sellerId}/commission-rules` | Commission rate history, oldest first. |
 | `POST` | `/api/agent/ask` | Body `{"question": "..."}`. Returns `{answer, toolCalls}`, the answer plus the trace of every tool call. |
 | `GET` | `/api/holds?status=PENDING` | Holds with the given status (`PENDING` by default), oldest first. |
@@ -540,8 +540,13 @@ No test needs an API key or a running LLM: they all use the scripted model.
   compound weekly rate `(last / first)^(1 / (n − 1)) − 1`. Java 27 added `BigDecimal.rootn`, so the
   n-th root is taken in decimal arithmetic with a chosen precision (`DECIMAL64`) instead of going
   through `double` and `Math.pow`, whose binary rounding would leak into amounts that are exact
-  decimals. Like any compound rate it depends only on the first and last weeks, and it isn't defined
-  from or to a payout that isn't positive.
+  decimals. It isn't defined from or to a payout that isn't positive.
+- **Two numbers to tell a trend from a one-off.** A compound rate depends only on the first and last
+  weeks: seven flat weeks and one 50% drop average about the same as a steady 9.4% weekly decline.
+  So the trend also reports the **largest week-over-week change** and its week. Close to the
+  average, the change was spread over the weeks (a trend); much larger, it happened in one week (a
+  one-off). The tool description tells the model to compare the two instead of trusting the
+  average alone.
 - **`JdbcClient` instead of JPA.** The ledger is append-only and read through a few explicit
   queries; plain SQL keeps the mapping to the sealed hierarchy obvious and avoids ORM overhead.
 - **Repeatable migration for demo data.** Schema changes stay in versioned migrations; the demo

@@ -76,4 +76,32 @@ public record PayoutTrend(List<PayoutBreakdown> periods) {
                 .multiply(HUNDRED)
                 .setScale(1, RoundingMode.HALF_EVEN));
     }
+
+    /**
+     * The largest change of the net payout from one period to the next, in percent, and the period it
+     * led to; the earliest one on a tie. Unlike {@link #averageGrowthPercent()}, it follows the path
+     * between the first and last periods: close to the average, the change was spread over the
+     * periods (a trend); much larger, it was concentrated in one period (a one-off). Changes from a
+     * zero net payout have no percentage and are skipped; empty when all of them are.
+     */
+    public Optional<PeriodChange> largestPeriodChange() {
+        PeriodChange largest = null;
+        for (int i = 1; i < periods.size(); i++) {
+            BigDecimal before = periods.get(i - 1).net().amount();
+            if (before.signum() == 0) {
+                continue;
+            }
+            BigDecimal percent = periods.get(i).net().amount().subtract(before)
+                    .multiply(HUNDRED)
+                    .divide(before.abs(), 1, RoundingMode.HALF_EVEN);
+            if (largest == null || percent.abs().compareTo(largest.percent().abs()) > 0) {
+                largest = new PeriodChange(periods.get(i).period(), percent);
+            }
+        }
+        return Optional.ofNullable(largest);
+    }
+
+    /** A change of the net payout into {@code period}, from the period before, in percent. */
+    public record PeriodChange(PayoutPeriod period, BigDecimal percent) {
+    }
 }

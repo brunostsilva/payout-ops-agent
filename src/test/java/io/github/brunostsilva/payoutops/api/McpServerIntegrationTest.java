@@ -62,7 +62,8 @@ class McpServerIntegrationTest {
         assertThat(result.isError()).isNotEqualTo(Boolean.TRUE);
         assertThat(text(result))
                 .contains("\"periodStart\":\"2026-10-19\"")
-                .contains("\"averageWeeklyGrowthPercent\":-27.5");
+                .contains("\"averageWeeklyGrowthPercent\":-27.5")
+                .contains("\"largestWeeklyChange\":{\"periodStart\":\"2026-10-26\"");
     }
 
     @Test

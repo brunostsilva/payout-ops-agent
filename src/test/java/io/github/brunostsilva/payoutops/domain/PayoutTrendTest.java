@@ -64,6 +64,35 @@ class PayoutTrendTest {
     }
 
     @Test
+    void theLargestWeeklyChangeTellsAOneOffDropFromASteadyDeclineWithTheSameAverage() {
+        // Both lose 27.1% over four weeks, so both average -10.0% a week...
+        PayoutTrend steady = trend("1000.00", "900.00", "810.00", "729.00");
+        PayoutTrend oneOff = trend("1000.00", "1000.00", "1000.00", "729.00");
+        assertThat(steady.averageGrowthPercent()).isEqualTo(oneOff.averageGrowthPercent());
+
+        // ...but the steady decline loses about that much every week, the one-off all in its last week.
+        assertThat(steady.largestPeriodChange()).hasValueSatisfying(change -> {
+            assertThat(change.percent()).isEqualByComparingTo("-10.0");
+            assertThat(change.period()).isEqualTo(steady.periods().get(1).period()); // earliest of the ties
+        });
+        assertThat(oneOff.largestPeriodChange()).hasValueSatisfying(change -> {
+            assertThat(change.percent()).isEqualByComparingTo("-27.1");
+            assertThat(change.period()).isEqualTo(oneOff.last().period());
+        });
+    }
+
+    @Test
+    void theLargestWeeklyChangeIsTheLargestInEitherDirectionAndSkipsChangesFromZero() {
+        assertThat(trend("1000.00", "1500.00", "1200.00").largestPeriodChange())
+                .hasValueSatisfying(change -> assertThat(change.percent()).isEqualByComparingTo("50.0"));
+        assertThat(trend("1000.00", "1100.00", "550.00").largestPeriodChange())
+                .hasValueSatisfying(change -> assertThat(change.percent()).isEqualByComparingTo("-50.0"));
+        assertThat(trend("0.00", "500.00", "400.00").largestPeriodChange())
+                .hasValueSatisfying(change -> assertThat(change.percent()).isEqualByComparingTo("-20.0"));
+        assertThat(trend("0.00", "500.00").largestPeriodChange()).isEmpty();
+    }
+
+    @Test
     void overTwoWeeksItIsTheWeekOverWeekChange() {
         PayoutTrend trend = trend("8800.00", "6380.00");
         PayoutComparison comparison = new PayoutComparison(trend.first(), trend.last());

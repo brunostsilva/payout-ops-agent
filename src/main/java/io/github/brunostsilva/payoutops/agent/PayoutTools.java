@@ -62,9 +62,11 @@ public class PayoutTools {
 
     @Tool(description = """
             Returns a seller's weekly net payouts for the given number of consecutive Monday-to-Sunday weeks ending
-            with the week containing weekOf, oldest first, with the total change from the first week to the last and
-            the average weekly growth (compounded). Use it to tell a one-off change from a trend, e.g. a drop after
-            weeks of steady growth.""")
+            with the week containing weekOf, oldest first, with: the total change from the first week to the last;
+            the average weekly growth (compounded), which depends only on the first and last weeks; and the largest
+            change between two consecutive weeks, with the week it happened. To tell a one-off change from a trend,
+            compare the last two: a largest weekly change close to the average growth means the change was spread
+            over the weeks (a trend), a much larger one means it happened in that single week (a one-off).""")
     public PayoutTrendResponse getPayoutTrend(
             @ToolParam(description = "Seller id, e.g. seller-123") String sellerId,
             @ToolParam(description = "Any date inside the last week of the trend, formatted YYYY-MM-DD") String weekOf,

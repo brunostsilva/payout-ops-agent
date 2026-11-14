@@ -122,15 +122,20 @@ class PayoutDemoScenarioIntegrationTest {
                 .andExpect(jsonPath("$.weeks[1].periodStart").value("2026-10-26"))
                 .andExpect(jsonPath("$.weeks[1].net.amount").value(6380.00))
                 .andExpect(jsonPath("$.totalChangePercent").value(-27.5))
-                .andExpect(jsonPath("$.averageWeeklyGrowthPercent").value(-27.5));
+                .andExpect(jsonPath("$.averageWeeklyGrowthPercent").value(-27.5))
+                .andExpect(jsonPath("$.largestWeeklyChange.periodStart").value("2026-10-26"))
+                .andExpect(jsonPath("$.largestWeeklyChange.percent").value(-27.5));
 
-        // The seeded data starts the week of 2026-10-19: from the empty week before, growth isn't defined.
+        // The seeded data starts the week of 2026-10-19: from the empty week before, growth isn't defined,
+        // but the drop into the week of 2026-10-26 still shows as the largest weekly change.
         mockMvc.perform(get("/api/sellers/seller-123/payouts/trend").param("weekOf", "2026-10-29").param("weeks", "3"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.weeks[0].periodStart").value("2026-10-12"))
                 .andExpect(jsonPath("$.weeks[0].net.amount").value(0.0))
                 .andExpect(jsonPath("$.totalChangePercent").value(nullValue()))
-                .andExpect(jsonPath("$.averageWeeklyGrowthPercent").value(nullValue()));
+                .andExpect(jsonPath("$.averageWeeklyGrowthPercent").value(nullValue()))
+                .andExpect(jsonPath("$.largestWeeklyChange.periodStart").value("2026-10-26"))
+                .andExpect(jsonPath("$.largestWeeklyChange.percent").value(-27.5));
     }
 
     @Test

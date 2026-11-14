@@ -79,20 +79,30 @@ public final class PayoutResponses {
 
     /**
      * Weekly net payouts, oldest first. {@code averageWeeklyGrowthPercent} is the compound rate from the
-     * first week to the last; it and {@code totalChangePercent} are null when they aren't defined.
+     * first week to the last, which only depends on those two; {@code largestWeeklyChange} follows the
+     * path in between. Each is null when it isn't defined.
      */
     public record PayoutTrendResponse(
             String sellerId,
             List<WeeklyNetResponse> weeks,
             BigDecimal totalChangePercent,
-            BigDecimal averageWeeklyGrowthPercent) {
+            BigDecimal averageWeeklyGrowthPercent,
+            WeeklyChangeResponse largestWeeklyChange) {
 
         public static PayoutTrendResponse from(PayoutTrend trend) {
             return new PayoutTrendResponse(
                     trend.first().sellerId().value(),
                     trend.periods().stream().map(WeeklyNetResponse::from).toList(),
                     trend.totalChangePercent().orElse(null),
-                    trend.averageGrowthPercent().orElse(null));
+                    trend.averageGrowthPercent().orElse(null),
+                    trend.largestPeriodChange().map(WeeklyChangeResponse::from).orElse(null));
+        }
+    }
+
+    /** The change of the net payout into the week starting {@code periodStart}, from the week before. */
+    public record WeeklyChangeResponse(LocalDate periodStart, LocalDate periodEnd, BigDecimal percent) {
+        public static WeeklyChangeResponse from(PayoutTrend.PeriodChange change) {
+            return new WeeklyChangeResponse(change.period().start(), change.period().end(), change.percent());
         }
     }
 
