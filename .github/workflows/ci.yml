@@ -12,11 +12,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Java 25
+      - name: Set up Java 27
         uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: "25"
+          java-version: "27"
           cache: maven
 
       - name: Build and test (unit + Testcontainers integration tests)

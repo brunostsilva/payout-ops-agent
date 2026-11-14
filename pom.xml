@@ -18,7 +18,7 @@
     <description>AI-assisted payout operations: explains seller payout changes from a marketplace ledger.</description>
 
     <properties>
-        <java.version>25</java.version>
+        <java.version>27</java.version>
         <spring-ai.version>2.0.2</spring-ai.version>
     </properties>
 
