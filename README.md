@@ -401,7 +401,7 @@ to `127.0.0.1`: they are reachable from your machine only, not from the rest of 
 
 Requirements: **Java 27** and **Docker** (for Postgres and the integration tests). Maven doesn't
 need to be installed: the **Maven Wrapper** (`./mvnw`, or `mvnw.cmd` on Windows) downloads the
-version pinned in `.mvn/wrapper/maven-wrapper.properties` (Maven 3.10.0) on its first run.
+version pinned in `.mvn/wrapper/maven-wrapper.properties` (Maven 3.10.2) on its first run.
 
 **Option A: throwaway database via Testcontainers** (nothing else to start; the `demo` profile
 is enabled automatically):
@@ -519,7 +519,8 @@ real database never inserts synthetic sellers or ledger entries.
   `HoldWorkflowIntegrationTest` run with the `demo` profile and exercise the service, the agent,
   the hold workflow and the HTTP API end to end; `McpServerIntegrationTest` starts the app on a
   random port and uses a real MCP client to list and call the tools; `DefaultProfileIntegrationTest`
-  checks that no demo data is loaded without that profile; `ObservabilityIntegrationTest` checks
+  checks that no demo data is loaded without that profile and that no real AI model (only the
+  scripted one) is configured, so no API key is needed; `ObservabilityIntegrationTest` checks
   the audit log lines and their trace ids, that no question, reason or note text is logged, the
   business metrics on `/actuator/prometheus` and the health probes.
 
@@ -577,8 +578,8 @@ No test needs an API key or a running LLM: they all use the scripted model.
 | | |
 |---|---|
 | Language | Java 27 (records, sealed interfaces, pattern matching, `BigDecimal.rootn`) |
-| Framework | Spring Boot 4.1 (Spring Framework 7, Jackson 3) |
-| AI | Spring AI 2.0: tool calling, OpenAI and Ollama starters, MCP server |
+| Framework | Spring Boot 4.2 (Spring Framework 7, Jackson 3) |
+| AI | Spring AI 2.1: tool calling, OpenAI and Ollama starters, MCP server |
 | Persistence | PostgreSQL 17, Flyway, `JdbcClient` |
 | Observability | SLF4J + Log4j2 (ECS JSON), Micrometer (Observation, Prometheus), OpenTelemetry (OTLP), Jaeger, Grafana |
 | Testing | JUnit 5, AssertJ, MockMvc, Testcontainers 2, MCP Java SDK client, `TestObservationRegistry` |
